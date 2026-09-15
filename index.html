@@ -1,0 +1,1860 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Supervision Maintenance — Parc de bornes</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<style>
+  :root{
+    --bg:#f4f5f7; --panel:#ffffff; --border:#e2e4e9; --border-soft:#edeef1;
+    --text:#1c1e21; --text-dim:#6b7280; --text-faint:#9aa0ac;
+    --accent:#2563eb; --accent-dim:#eaf0fe;
+    --red:#dc2626; --red-bg:#fdecec;
+    --amber:#d97706; --amber-bg:#fef3e2;
+    --green:#16a34a; --green-bg:#eaf7ee;
+    --gray:#9aa0ac; --gray-bg:#eef0f2;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg:0 8px 24px rgba(16,24,40,.14), 0 2px 6px rgba(16,24,40,.08);
+    color-scheme: light;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); font-size:14px; overflow:hidden;
+  }
+  button, input, select, textarea{ font-family:inherit; font-size:inherit; }
+  button{ cursor:pointer; }
+
+  /* ---------- App shell ---------- */
+  #app{ display:flex; flex-direction:column; height:100vh; }
+  .auth-screen{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); z-index:500; padding:16px; }
+  .auth-card{ background:var(--panel); border-radius:14px; box-shadow:var(--shadow-lg); padding:28px 26px; width:100%; max-width:340px; }
+  .user-badge{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-dim); white-space:nowrap; }
+  .user-badge .role-pill{ font-weight:700; padding:2px 8px; border-radius:999px; font-size:11px; }
+  .user-badge .role-pill.admin{ background:var(--accent-dim); color:var(--accent); }
+  .user-badge .role-pill.viewer{ background:var(--gray-bg); color:var(--text-dim); }
+  .user-badge .email{ max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  header.topbar{
+    display:flex; align-items:center; gap:16px;
+    padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--border);
+    flex-shrink:0; z-index:20; flex-wrap:wrap;
+  }
+  .brand{ display:flex; align-items:center; gap:9px; font-weight:700; font-size:15px; white-space:nowrap;}
+  .brand .dot{ width:9px; height:9px; border-radius:50%; background:var(--accent); }
+  .campaign-chip{
+    display:flex; align-items:center; gap:10px; background:var(--gray-bg);
+    padding:4px 6px 4px 12px; border-radius:999px; font-size:12.5px; color:var(--text-dim);
+  }
+  .campaign-chip select{
+    border:none; background:transparent; font-weight:700; color:var(--text); cursor:pointer; outline:none;
+    max-width:220px; padding:4px 2px;
+  }
+  .status-counts{ display:flex; gap:6px; }
+  .status-counts .c{ display:flex; align-items:center; gap:4px; font-weight:600; }
+  .status-counts .swatch{ width:8px; height:8px; border-radius:50%; }
+  .topbar-spacer{ flex:1; }
+  .role-toggle{
+    display:flex; align-items:center; gap:8px; background:var(--gray-bg);
+    padding:4px; border-radius:999px; font-size:12.5px;
+  }
+  .role-toggle button{
+    border:none; background:transparent; padding:6px 12px; border-radius:999px;
+    color:var(--text-dim); font-weight:600;
+  }
+  .role-toggle button.active{ background:var(--panel); color:var(--text); box-shadow:var(--shadow); }
+  .icon-btn{
+    border:1px solid var(--border); background:var(--panel); border-radius:8px;
+    width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+    color:var(--text-dim); flex-shrink:0;
+  }
+  .icon-btn:hover{ background:var(--gray-bg); color:var(--text); }
+
+  /* ---------- Body layout ---------- */
+  .body-row{ flex:1; display:flex; min-height:0; }
+
+  aside.sidebar{
+    width:340px; min-width:340px; background:var(--panel); border-right:1px solid var(--border);
+    display:flex; flex-direction:column; min-height:0;
+  }
+  .sidebar-top{ padding:14px 14px 8px; border-bottom:1px solid var(--border-soft); flex-shrink:0;}
+  .search-box{
+    display:flex; align-items:center; gap:8px; background:var(--bg); border:1px solid var(--border);
+    border-radius:8px; padding:8px 10px; margin-bottom:10px;
+  }
+  .search-box input{ border:none; background:transparent; outline:none; width:100%; color:var(--text); }
+  .search-box svg{ flex-shrink:0; color:var(--text-faint); }
+
+  .city-select-wrap{ margin-bottom:10px; }
+  .city-select-wrap select{
+    width:100%; border:1px solid var(--border); border-radius:8px; padding:8px 10px;
+    background:var(--panel); color:var(--text); font-weight:600;
+  }
+
+  .filter-chips{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .chip{
+    border:1px solid var(--border); background:var(--panel); border-radius:999px; padding:5px 10px;
+    font-size:12px; font-weight:600; color:var(--text-dim); display:flex; align-items:center; gap:5px;
+  }
+  .chip .swatch{ width:7px; height:7px; border-radius:50%; }
+  .chip.active{ background:var(--text); color:#fff; border-color:var(--text); }
+  .chip.active .swatch{ box-shadow:0 0 0 1px #fff; }
+
+  .add-site-btn{
+    width:100%; background:var(--accent); color:#fff; border:none; border-radius:8px;
+    padding:10px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .add-site-btn:hover{ background:#1d4ed8; }
+  .add-site-btn:disabled{ background:var(--gray); cursor:not-allowed; }
+
+  .sidebar-list{ flex:1; overflow-y:auto; padding:6px 8px 14px; }
+  .site-row{
+    display:flex; align-items:flex-start; gap:10px; padding:9px 8px; border-radius:8px; margin-bottom:2px;
+  }
+  .site-row:hover{ background:var(--bg); }
+  .site-row.selected{ background:var(--accent-dim); }
+  .status-dot{ width:10px; height:10px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+  .site-row-main{ min-width:0; flex:1; }
+  .site-ref{ font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px;}
+  .incomplete-badge{
+    font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    color:var(--amber); background:var(--amber-bg); padding:1px 5px; border-radius:4px;
+  }
+  .site-addr{ color:var(--text-dim); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .site-tag{ color:var(--text-faint); font-size:11.5px; margin-top:1px; }
+  .empty-list{ padding:30px 16px; text-align:center; color:var(--text-faint); font-size:13px; line-height:1.5; }
+
+  .sidebar-footer{
+    border-top:1px solid var(--border-soft); padding:10px 14px; display:flex; gap:8px; flex-shrink:0;
+  }
+  .ghost-btn{
+    flex:1; background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    padding:7px 8px; font-size:12px; font-weight:600; color:var(--text-dim);
+  }
+  .ghost-btn:hover{ background:var(--bg); color:var(--text); }
+
+  /* ---------- Map ---------- */
+  .map-wrap{ flex:1; position:relative; min-width:0; }
+  #map{ position:absolute; inset:0; background:#dfe3e8; }
+  .leaflet-marker-status{ border-radius:50%; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+
+  .placement-banner{
+    position:absolute; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--text); color:#fff; padding:9px 16px; border-radius:999px; font-size:13px;
+    font-weight:600; display:flex; align-items:center; gap:10px; box-shadow:var(--shadow-lg); z-index:500;
+  }
+  .placement-banner button{
+    background:rgba(255,255,255,.15); border:none; color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:600;
+  }
+  .placement-banner button:hover{ background:rgba(255,255,255,.28); }
+
+  .legend{
+    position:absolute; bottom:16px; left:16px; background:var(--panel); border:1px solid var(--border);
+    border-radius:10px; padding:10px 12px; box-shadow:var(--shadow); font-size:12px; z-index:400;
+  }
+  .legend-row{ display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+  .legend-row:last-child{ margin-bottom:0; }
+  .legend-dot{ width:10px; height:10px; border-radius:50%; }
+
+  /* ---------- Fiche panel ---------- */
+  .fiche-panel{
+    position:absolute; top:0; right:0; bottom:0; width:380px; background:var(--panel);
+    border-left:1px solid var(--border); box-shadow:-6px 0 24px rgba(16,24,40,.08);
+    transform:translateX(100%); transition:transform .18s ease; z-index:600;
+    display:flex; flex-direction:column;
+  }
+  .fiche-panel.open{ transform:translateX(0); }
+  .fiche-head{
+    padding:16px; border-bottom:1px solid var(--border-soft); display:flex; align-items:flex-start; gap:10px; flex-shrink:0;
+  }
+  .fiche-head .status-dot{ width:13px; height:13px; margin-top:3px; }
+  .fiche-title{ flex:1; min-width:0; }
+  .fiche-title input.ref-input{
+    font-size:17px; font-weight:700; border:none; background:transparent; width:100%; padding:0; outline:none;
+  }
+  .fiche-title input.ref-input:focus{ background:var(--bg); border-radius:4px; }
+  .fiche-sub{ color:var(--text-dim); font-size:12px; margin-top:2px; }
+  .fiche-body{ flex:1; overflow-y:auto; padding:4px 16px 16px; }
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--text-faint); margin-bottom:5px; }
+  .field input, .field select, .field textarea{
+    width:100%; border:1px solid var(--border); border-radius:8px; padding:8px 10px; color:var(--text); background:var(--panel);
+  }
+  .field input:disabled, .field select:disabled, .field textarea:disabled{ background:var(--bg); color:var(--text-dim); }
+  .field textarea{ resize:vertical; min-height:56px; }
+  .field-row{ display:flex; gap:10px; }
+  .field-row .field{ flex:1; }
+  .geo-row{ display:flex; gap:8px; }
+  .geo-row input{ flex:1; }
+  .small-btn{
+    border:1px solid var(--border); background:var(--panel); border-radius:8px; padding:8px 11px; font-weight:600; font-size:12.5px; color:var(--text);
+    white-space:nowrap;
+  }
+  .small-btn:hover{ background:var(--bg); }
+  .status-pill{ display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12.5px; padding:5px 10px; border-radius:999px; }
+  .hint{ font-size:11.5px; color:var(--text-faint); margin-top:5px; line-height:1.4; }
+  .fiche-footer{ border-top:1px solid var(--border-soft); padding:12px 16px; display:flex; gap:8px; flex-shrink:0; }
+  .primary-btn{ flex:1; background:var(--accent); color:#fff; border:none; border-radius:8px; padding:10px; font-weight:600; }
+  .primary-btn:hover{ background:#1d4ed8; }
+  .danger-btn{ background:var(--red-bg); color:var(--red); border:none; border-radius:8px; padding:10px 12px; font-weight:600; }
+  .danger-btn:hover{ background:#fadbdb; }
+  .close-x{ border:none; background:transparent; color:var(--text-faint); font-size:18px; line-height:1; padding:4px; }
+  .close-x:hover{ color:var(--text); }
+  .readonly-note{
+    background:var(--gray-bg); color:var(--text-dim); font-size:11.5px; padding:8px 10px; border-radius:8px; margin-bottom:12px; line-height:1.4;
+  }
+
+  /* ---------- Modal ---------- */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(16,24,40,.45); display:flex; align-items:center; justify-content:center;
+    z-index:1000; padding:20px;
+  }
+  .modal{
+    background:var(--panel); border-radius:12px; width:100%; max-width:520px; max-height:88vh; display:flex; flex-direction:column;
+    box-shadow:var(--shadow-lg);
+  }
+  .modal-head{ padding:16px 18px; border-bottom:1px solid var(--border-soft); display:flex; align-items:center; justify-content:space-between; flex-shrink:0;}
+  .modal-head h3{ margin:0; font-size:15.5px; }
+  .modal-body{ padding:16px 18px; overflow-y:auto; }
+  .modal-foot{ padding:14px 18px; border-top:1px solid var(--border-soft); display:flex; justify-content:flex-end; gap:8px; flex-shrink:0;}
+  .modal-body .field{ margin-bottom:14px; }
+  .section-title{ font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--text-faint); margin:18px 0 8px; }
+  .section-title:first-child{ margin-top:0; }
+  textarea.csv-area{ width:100%; min-height:120px; border:1px solid var(--border); border-radius:8px; padding:10px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .csv-help{ font-size:11.5px; color:var(--text-faint); margin-top:6px; line-height:1.5; }
+  .import-result{ margin-top:10px; font-size:12.5px; padding:8px 10px; border-radius:8px; }
+  .import-result.ok{ background:var(--green-bg); color:var(--green); }
+  .import-result.err{ background:var(--red-bg); color:var(--red); }
+  .file-drop{ border:1.5px dashed var(--border); border-radius:8px; padding:16px; text-align:center; color:var(--text-dim); font-size:12.5px; }
+  .file-drop input{ display:block; margin:8px auto 0; }
+
+  /* ---------- Field / campaign manager ---------- */
+  .tabbar{ display:flex; gap:6px; margin-bottom:16px; }
+  .tabbtn{ border:1px solid var(--border); background:var(--panel); border-radius:8px; padding:7px 12px; font-weight:600; font-size:12.5px; color:var(--text-dim); }
+  .tabbtn.active{ background:var(--text); color:#fff; border-color:var(--text); }
+  .tabpane{ display:none; }
+  .tabpane.active{ display:block; }
+  .fm-hint{ font-size:11.5px; color:var(--text-faint); margin-bottom:14px; line-height:1.5; }
+  .fmrow{ border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:10px; background:var(--bg); }
+  .fmrow-top{ display:flex; align-items:center; gap:8px; }
+  .fmrow-arrows{ display:flex; flex-direction:column; gap:2px; flex-shrink:0; }
+  .fmrow-arrows button{ border:1px solid var(--border); background:var(--panel); border-radius:4px; width:20px; height:16px; font-size:9px; line-height:1; padding:0; color:var(--text-dim); }
+  .fmrow-arrows button:hover{ background:var(--gray-bg); }
+  .fmrow-label{ flex:1; min-width:0; border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-weight:600; background:var(--panel); }
+  .fmrow-type{ border:1px solid var(--border); border-radius:6px; padding:6px 8px; background:var(--panel); flex-shrink:0; }
+  .fmrow-del{ border:none; background:var(--red-bg); color:var(--red); border-radius:6px; width:28px; height:28px; font-weight:700; flex-shrink:0; }
+  .fmrow-del:hover{ background:#fadbdb; }
+  .fmrow-lock{ color:var(--text-faint); font-size:15px; padding:0 4px; flex-shrink:0; }
+  .fmrow-options{ margin-top:8px; }
+  .fmrow-options input{ width:100%; border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12.5px; background:var(--panel); }
+  .fmrow-bottom{ display:flex; align-items:center; gap:14px; margin-top:9px; flex-wrap:wrap; }
+  .fmrow-bottom label{ display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-dim); white-space:nowrap; }
+  .fmrow-default{ flex:1; min-width:140px; border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12.5px; background:var(--panel); }
+  .fmrow-sys-note{ font-size:11px; color:var(--text-faint); margin-top:7px; line-height:1.4; }
+  .fm-add-btn{ width:100%; border:1.5px dashed var(--border); background:transparent; border-radius:10px; padding:10px; font-weight:600; color:var(--text-dim); }
+  .fm-add-btn:hover{ background:var(--bg); color:var(--text); }
+  .cmrow-actions{ display:flex; gap:8px; margin-top:6px; }
+  .cmrow-actions .small-btn{ flex:1; }
+
+  /* ---------- Toast ---------- */
+  #toast{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(20px); opacity:0;
+    background:var(--text); color:#fff; padding:10px 18px; border-radius:8px; font-size:13px; z-index:2000;
+    transition:opacity .18s ease, transform .18s ease; pointer-events:none; box-shadow:var(--shadow-lg);
+  }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  @media (max-width:820px){
+    aside.sidebar{ position:absolute; left:0; top:0; bottom:0; z-index:550; transform:translateX(-100%); transition:transform .18s ease; box-shadow:var(--shadow-lg); }
+    aside.sidebar.open{ transform:translateX(0); }
+    .fiche-panel{ width:100%; }
+    .mobile-only{ display:flex !important; }
+    .user-badge .email{ display:none; }
+  }
+  .mobile-only{ display:none; }
+</style>
+</head>
+<body>
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="brand" style="margin-bottom:18px;"><span class="dot"></span>Supervision Bornes</div>
+    <div id="authFormWrap">
+      <div class="field"><label>E-mail</label><input type="email" id="auth_email" autocomplete="username"></div>
+      <div class="field"><label>Mot de passe</label><input type="password" id="auth_password" autocomplete="current-password"></div>
+      <div class="hint" id="auth_error" style="color:var(--red); min-height:16px;"></div>
+      <button class="primary-btn" id="auth_submit" style="width:100%;">Se connecter</button>
+    </div>
+    <div id="authUnauthorized" style="display:none;">
+      <div class="hint">Ce compte n'est pas autorisé sur cette application. Contacte l'administrateur pour obtenir un accès.</div>
+      <button class="ghost-btn" id="auth_signout" style="margin-top:10px; width:100%;">Se déconnecter</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+
+  <header class="topbar">
+    <button class="icon-btn mobile-only" id="btnToggleSidebar" title="Sites">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div class="brand"><span class="dot"></span>Supervision Bornes — Bordeaux Métropole</div>
+    <div class="campaign-chip" id="campaignChipWrap"></div>
+    <div class="status-counts" id="statusCounts"></div>
+    <div class="topbar-spacer"></div>
+    <div class="user-badge" id="userBadge"></div>
+    <button class="icon-btn" id="btnFitAll" title="Vue d'ensemble (tous les sites)">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+    </button>
+    <button class="icon-btn" id="btnSettings" title="Paramètres : campagnes et champs de la fiche">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <button class="icon-btn" id="btnImport" title="Importer des sites (CSV)">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+  </header>
+
+  <div class="body-row">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="search-box">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="searchInput" placeholder="Rechercher dans tous les champs...">
+        </div>
+        <div id="cityFilterWrap" class="city-select-wrap"></div>
+        <div id="secteurFilterWrap" class="city-select-wrap"></div>
+        <div class="role-toggle" id="sortToggle" style="margin-bottom:10px; width:100%; justify-content:center;">
+          <span style="padding:0 8px; color:var(--text-dim); font-size:12px; font-weight:600;">Trier :</span>
+          <button type="button" data-sort="urgence" class="active">Urgence</button>
+          <button type="button" data-sort="nom">Nom</button>
+        </div>
+        <div class="filter-chips" id="filterChips"></div>
+        <button class="add-site-btn" id="btnAddSite">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Ajouter un site
+        </button>
+        <button class="add-site-btn" id="btnItineraire" title="Calcule un ordre de passage optimisé pour les sites actuellement filtrés (idéal combiné au filtre Secteur/Tournée)" style="margin-top:6px; background:var(--panel); color:var(--text); border:1px solid var(--border);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+          Itinéraire optimisé
+        </button>
+      </div>
+      <div class="sidebar-list" id="siteList"></div>
+      <div class="sidebar-footer">
+        <button class="ghost-btn" id="btnExportCsv">Exporter CSV</button>
+        <button class="ghost-btn" id="btnExportJson">Sauvegarde JSON</button>
+      </div>
+    </aside>
+
+    <div class="map-wrap">
+      <div id="map"></div>
+      <div class="placement-banner" id="placementBanner" style="display:none;">
+        <span>📍 Cliquez sur la carte à l'emplacement du site</span>
+        <button id="btnCancelPlacement">Annuler</button>
+      </div>
+      <div class="legend">
+        <div class="legend-row"><span class="legend-dot" style="background:var(--green)"></span>Fait cette session</div>
+        <div class="legend-row"><span class="legend-dot" style="background:var(--amber)"></span>À faire cette session</div>
+        <div class="legend-row"><span class="legend-dot" style="background:var(--red)"></span>Pas fait — très en retard</div>
+      </div>
+
+      <div class="fiche-panel" id="fichePanel"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+import {
+  initializeFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection,
+  onSnapshot, writeBatch
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+
+// Base de données partagée en ligne (Firebase). Cette configuration n'est
+// pas un secret à protéger — elle est conçue pour être publique côté
+// navigateur ; la vraie sécurité vient des règles Firestore (qui limitent
+// qui peut lire/écrire quoi) et non de cette clé.
+const firebaseConfig = {
+  apiKey: "AIzaSyDFHGpR6ovA6iWnFsSdVvzl3yktvy3LuWc",
+  authDomain: "supervision-bornes.firebaseapp.com",
+  projectId: "supervision-bornes",
+  storageBucket: "supervision-bornes.firebasestorage.app",
+  messagingSenderId: "562961732277",
+  appId: "1:562961732277:web:89d3304ac232d0e04224fc"
+};
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const dbFs = initializeFirestore(fbApp, { ignoreUndefinedProperties: true });
+const sitesCol = collection(dbFs, "sites");
+const authorizedUsersCol = collection(dbFs, "authorizedUsers");
+const campaignsDocRef = doc(dbFs, "config", "campaigns");
+const schemaDocRef = doc(dbFs, "config", "schema");
+
+(function(){
+"use strict";
+
+/* =========================================================================
+   SUPERVISION MAINTENANCE — PARC DE BORNES
+   Application autonome (aucun serveur requis). Données stockées dans le
+   navigateur (localStorage).
+   - Champs de fiche personnalisables : ⚙️ Paramètres → « Champs de la fiche ».
+   - Plusieurs campagnes en parallèle (ex : S2 2026 en cours + S1 2027 en
+     préparation) : ⚙️ Paramètres → « Campagnes », puis sélecteur en haut
+     pour choisir celle qu'on visualise.
+   ========================================================================= */
+
+const TODAY = new Date(); TODAY.setHours(0,0,0,0);
+
+const STATUS = {
+  vert:  { label: "Fait",              color: "#16a34a" },
+  jaune: { label: "À faire (session)", color: "#d97706" },
+  rouge: { label: "Très en retard",    color: "#dc2626" },
+};
+
+const FIELD_TYPES = [
+  { value:"text",     label:"Texte court" },
+  { value:"textarea", label:"Texte long" },
+  { value:"number",   label:"Nombre" },
+  { value:"date",     label:"Date" },
+  { value:"select",   label:"Liste déroulante" },
+];
+
+/* --------------------------- Schéma par défaut --------------------------- */
+function defaultSchema(){
+  return [
+    { id:"nom_site", label:"Nom du site", type:"text", system:false, required:true, show_in_list:true, default:"" },
+    { id:"reference", label:"Référence (code interne)", type:"text", system:false, required:false, show_in_list:true, default:"" },
+    { id:"adresse", label:"Adresse", type:"text", system:true, required:true, show_in_list:true, default:"" },
+    { id:"ville", label:"Ville", type:"select",
+      options:["Bordeaux","Bègles","Mérignac","Bruges"],
+      system:true, required:true, show_in_list:true, default:"Bordeaux" },
+    { id:"secteur", label:"Secteur / Tournée", type:"select",
+      options:[],
+      system:true, required:false, show_in_list:true, default:"" },
+    { id:"frequence", label:"Fréquence de maintenance", type:"select",
+      options:["Semestrielle (2x/an)","Annuelle (1x/an)"],
+      system:true, required:true, show_in_list:false, default:"Semestrielle (2x/an)" },
+    { id:"type_borne", label:"Type de borne", type:"select",
+      options:["Borne escamotable automatique","Borne escamotable manuelle","Arceau fixe","Potelet fixe","Barrière levante","Chaîne / plot amovible","Autre / à définir"],
+      system:false, required:true, show_in_list:false, default:"Autre / à définir" },
+    { id:"nombre_bornes", label:"Nombre de bornes", type:"number", system:false, required:true, show_in_list:false, default:"1" },
+    { id:"couleur_borne", label:"Couleur de la borne", type:"text", system:false, required:true, show_in_list:false, default:"" },
+    { id:"etiquette", label:"Étiquette (repère libre sur la carte)", type:"text", system:false, required:false, show_in_list:true, default:"" },
+    { id:"notes", label:"Notes", type:"textarea", system:false, required:false, show_in_list:false, default:"" },
+  ];
+}
+
+
+// Base de données partagée : Firestore (config Firebase tout en haut du
+// fichier). Le schéma des champs et les campagnes sont chacun un document
+// unique (config/schema, config/campaigns) ; chaque site est son propre
+// document dans la collection "sites" — vrai temps réel entre tous les
+// appareils connectés (PC, smartphone...), quel que soit qui modifie quoi.
+function currentSemesterCampaign(){
+  const y = TODAY.getFullYear();
+  const isH1 = TODAY.getMonth() < 6; // Jan(0)–Jun(5) = S1, sinon S2
+  return {
+    id: uid("camp"),
+    nom: (isH1?`S1 ${y}`:`S2 ${y}`) + " (en cours)",
+    date_debut: isH1 ? `${y}-01-01` : `${y}-07-01`,
+    date_fin:   isH1 ? `${y}-06-30` : `${y}-12-31`,
+    seuil_retard_jours: 182,
+    alerte_jours: 30,
+  };
+}
+function normalizeSite(site){
+  if(!site.fields) site.fields = {};
+  if(!site.maintenance) site.maintenance = {};
+  return site;
+}
+
+let DB = { campaigns: [], schema: [], sites: [], currentCampaignId: null };
+let unsubSites=null, unsubCampaigns=null, unsubSchema=null;
+let fsReady = { campaigns:false, schema:false, sites:false };
+let firstFitDone = false;
+
+function attachFirestoreListeners(){
+  fsReady = { campaigns:false, schema:false, sites:false };
+  unsubSchema = onSnapshot(schemaDocRef, async (snap)=>{
+    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+      DB.schema = snap.data().list;
+    } else {
+      DB.schema = defaultSchema();
+      if(role==="admin"){ try{ await setDoc(schemaDocRef, { list: DB.schema }); }catch(e){} }
+    }
+    fsReady.schema = true;
+    maybeRenderAll();
+  }, (err)=> toast("Erreur de synchronisation (schéma) : "+err.message));
+  unsubCampaigns = onSnapshot(campaignsDocRef, async (snap)=>{
+    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+      DB.campaigns = snap.data().list;
+    } else {
+      DB.campaigns = [currentSemesterCampaign()];
+      if(role==="admin"){ try{ await setDoc(campaignsDocRef, { list: DB.campaigns }); }catch(e){} }
+    }
+    if(!DB.currentCampaignId || !DB.campaigns.some(c=>c.id===DB.currentCampaignId)){
+      let saved = null;
+      try{ saved = localStorage.getItem("supervision_bornes_current_campaign"); }catch(e){}
+      DB.currentCampaignId = (saved && DB.campaigns.some(c=>c.id===saved)) ? saved : DB.campaigns[0].id;
+    }
+    fsReady.campaigns = true;
+    maybeRenderAll();
+  }, (err)=> toast("Erreur de synchronisation (campagnes) : "+err.message));
+  unsubSites = onSnapshot(sitesCol, (snap)=>{
+    DB.sites = snap.docs.map(d=> normalizeSite({ id:d.id, ...d.data() }));
+    fsReady.sites = true;
+    maybeRenderAll();
+  }, (err)=> toast("Erreur de synchronisation (sites) : "+err.message));
+}
+function detachFirestoreListeners(){
+  if(unsubSites) unsubSites();
+  if(unsubCampaigns) unsubCampaigns();
+  if(unsubSchema) unsubSchema();
+  unsubSites = unsubCampaigns = unsubSchema = null;
+  fsReady = { campaigns:false, schema:false, sites:false };
+  firstFitDone = false;
+}
+function maybeRenderAll(){
+  if(!fsReady.campaigns || !fsReady.schema || !fsReady.sites) return;
+  renderAll();
+  if(!firstFitDone){
+    firstFitDone = true;
+    map.invalidateSize();
+    if(DB.sites.length){
+      const bounds = L.latLngBounds(DB.sites.filter(s=>s.lat&&s.lng).map(s=>[s.lat,s.lng]));
+      if(bounds.isValid()) map.fitBounds(bounds.pad(0.3));
+    }
+  }
+}
+function uid(prefix){ return (prefix||"s")+"_"+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function slugify(str){
+  return (str||"champ").toString().normalize("NFD").replace(/[̀-ͯ]/g,"")
+    .toLowerCase().trim().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"") || "champ";
+}
+function uniqueFieldId(base, existingIds){
+  let id = base, n = 2;
+  while(existingIds.includes(id)){ id = base+"_"+n; n++; }
+  return id;
+}
+function addMonths(dateStr, n){
+  if(!dateStr) return "";
+  const d = new Date(dateStr+"T00:00:00");
+  d.setMonth(d.getMonth()+n);
+  return d.toISOString().slice(0,10);
+}
+
+/* --------------------------- Logique métier --------------------------- */
+function daysBetween(a,b){ return Math.round((a-b)/86400000); }
+function parseDate(s){ if(!s) return null; const d=new Date(s+"T00:00:00"); return isNaN(d) ? null : d; }
+function getField(site, id){ return site && site.fields ? site.fields[id] : undefined; }
+function titleFieldDef(){ return DB.schema[0] || {id:"__none", label:"Titre"}; }
+function siteTitle(site){
+  const tf = titleFieldDef();
+  const v = getField(site, tf.id);
+  if(v!==undefined && v!==null && String(v).trim()!=="") return v;
+  const ref = getField(site, "reference");
+  return (ref && String(ref).trim()!=="") ? ref : "(sans nom)";
+}
+function currentCampaign(){
+  return DB.campaigns.find(c=>c.id===DB.currentCampaignId) || DB.campaigns[0] ||
+    { id:"none", nom:"Aucune campagne", date_debut:"", date_fin:"", seuil_retard_jours:182, alerte_jours:30 };
+}
+function globalLastMaintenance(site){
+  const dates = Object.values(site.maintenance||{}).map(parseDate).filter(Boolean);
+  if(!dates.length) return null;
+  return new Date(Math.max.apply(null, dates.map(d=>d.getTime())));
+}
+
+function siteFrequency(site){
+  // Détecté sur le mot « annuel » dans la valeur du champ, insensible à la casse
+  // et à la formulation exacte (ex : « Annuelle (1x/an) »).
+  const v = String(getField(site,"frequence")||"").toLowerCase();
+  return v.indexOf("annuel") !== -1 ? "annuelle" : "semestrielle";
+}
+
+function computeStatus(site, campaign){
+  const freq = siteFrequency(site);
+  const doneThis = parseDate(site.maintenance ? site.maintenance[campaign.id] : null);
+  const debut = parseDate(campaign.date_debut);
+  if(doneThis && debut && doneThis >= debut) return "vert";
+
+  const last = globalLastMaintenance(site);
+  const baseSeuil = Number(campaign.seuil_retard_jours)||182; // ≈ 6 mois, cycle semestriel
+  const seuilRouge = freq==="annuelle" ? baseSeuil*2 : baseSeuil; // ≈ 12 mois pour un site annuel
+
+  if(!last){
+    const created = parseDate(site.created_at) || TODAY;
+    const since = daysBetween(TODAY, created);
+    return since >= seuilRouge ? "rouge" : "jaune";
+  }
+
+  const since = daysBetween(TODAY, last);
+  if(freq === "annuelle"){
+    // Fait il y a moins de ~6 mois (peu importe la campagne) : encore à jour pour l'année,
+    // pas besoin d'un nouveau passage cette session.
+    if(since < baseSeuil) return "vert";
+    return since >= seuilRouge ? "rouge" : "jaune";
+  }
+  return since >= baseSeuil ? "rouge" : "jaune";
+}
+function statusOf(site){ return computeStatus(site, currentCampaign()); }
+
+// Échéance : nombre de jours restants avant que le site ne bascule « très en
+// retard » (rouge) sur la campagne donnée. Négatif = déjà rouge.
+function statusDeadlineInfo(site, campaign){
+  campaign = campaign || currentCampaign();
+  const st = computeStatus(site, campaign);
+  const freq = siteFrequency(site);
+  const baseSeuil = Number(campaign.seuil_retard_jours)||182;
+  const seuilRouge = freq==="annuelle" ? baseSeuil*2 : baseSeuil;
+  const last = globalLastMaintenance(site);
+  const since = last ? daysBetween(TODAY, last) : daysBetween(TODAY, parseDate(site.created_at)||TODAY);
+  return { status: st, joursRestants: seuilRouge - since };
+}
+// Vrai si le site est encore « à faire » (jaune) mais approche du seuil
+// « très en retard », dans la fenêtre d'alerte configurée sur la campagne
+// (⚙️ Paramètres → Campagnes, 30 jours par défaut).
+function isEcheanceProche(site, campaign){
+  campaign = campaign || currentCampaign();
+  if(computeStatus(site, campaign) !== "jaune") return false;
+  const info = statusDeadlineInfo(site, campaign);
+  const seuilAlerte = Number(campaign.alerte_jours)||30;
+  return info.joursRestants <= seuilAlerte;
+}
+function ficheComplete(site){
+  return DB.schema.every(f=>{
+    if(!f.required) return true;
+    const v = getField(site, f.id);
+    return v!==undefined && v!==null && String(v).trim()!=="";
+  });
+}
+
+/* ------------------------------- État UI ------------------------------- */
+let role = "viewer"; // "admin" | "viewer" — déterminé après connexion (voir onAuthStateChanged)
+let currentUserEmail = null;
+let activeFilter = "tous";
+let activeCity = ""; // "" = toutes les villes
+let activeSecteur = ""; // "" = tous les secteurs / tournées
+let sortMode = "urgence"; // "urgence" | "nom"
+let searchQuery = "";
+let selectedId = null;
+let placementMode = false;
+let draftLatLng = null;
+
+/* -------------------------------- Carte -------------------------------- */
+// Les grands fournisseurs de tuiles gratuits (OpenStreetMap, CARTO...) bloquent
+// de plus en plus les applications sans clé d'API, surtout en usage local (file://).
+// Solution immédiate : tuiles Esri (gratuites, sans inscription).
+// Solution la plus fiable dans la durée : une clé gratuite MapTiler.
+//   1) Crée un compte gratuit sur https://cloud.maptiler.com/ (2 min, sans CB)
+//   2) Colle ta clé ci-dessous entre les guillemets
+const MAPTILER_KEY = "";
+
+const tileUrl = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`
+  : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+const tileAttribution = MAPTILER_KEY
+  ? '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  : 'Tiles &copy; Esri — Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, &copy; OpenStreetMap contributors, and the GIS User Community';
+
+const map = L.map("map", { zoomControl:true, minZoom:6, maxZoom:19 }).setView([44.8378, -0.5792], 13);
+const baseLayer = L.tileLayer(tileUrl, { maxZoom: 20, attribution: tileAttribution }).addTo(map);
+let tileErrorWarned = false;
+baseLayer.on("tileerror", ()=>{
+  if(tileErrorWarned) return;
+  tileErrorWarned = true;
+  toast("Le fond de carte ne se charge pas — voir le commentaire MAPTILER_KEY en haut du script.");
+});
+
+const clusterGroup = L.markerClusterGroup({
+  maxClusterRadius: 42,
+  spiderfyOnMaxZoom: true,
+  showCoverageOnHover: false,
+  iconCreateFunction: function(cluster){
+    const markers = cluster.getAllChildMarkers();
+    let counts = {vert:0,jaune:0,rouge:0};
+    markers.forEach(m=>{ counts[m.options.statusKey] = (counts[m.options.statusKey]||0)+1; });
+    let dominant = "vert";
+    if(counts.rouge>0) dominant="rouge"; else if(counts.jaune>0) dominant="jaune";
+    const n = markers.length;
+    return L.divIcon({
+      html:`<div style="background:${STATUS[dominant].color};color:#fff;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12.5px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);">${n}</div>`,
+      className:"", iconSize:[34,34]
+    });
+  }
+});
+map.addLayer(clusterGroup);
+
+let draftMarker = null;
+
+function statusMarker(site){
+  const st = statusOf(site);
+  const color = STATUS[st].color;
+  const icon = L.divIcon({
+    className:"leaflet-marker-status",
+    html:`<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);"></div>`,
+    iconSize:[16,16], iconAnchor:[8,8]
+  });
+  const m = L.marker([site.lat, site.lng], { icon, statusKey: st });
+  m.on("click", ()=> openFiche(site.id));
+  return m;
+}
+
+function rebuildMap(list){
+  clusterGroup.clearLayers();
+  list.forEach(site=>{
+    if(typeof site.lat === "number" && typeof site.lng === "number"){
+      clusterGroup.addLayer(statusMarker(site));
+    }
+  });
+}
+
+// Clic sur la carte : en mode placement -> pose un repère ; sinon, clic sur
+// une zone vide -> referme la fiche ouverte (les clics sur un marqueur ne
+// remontent pas jusqu'ici, Leaflet les intercepte).
+map.on("click", (e)=>{
+  if(placementMode){
+    draftLatLng = e.latlng;
+    if(draftMarker) map.removeLayer(draftMarker);
+    draftMarker = L.marker(e.latlng, { draggable:true }).addTo(map);
+    draftMarker.on("dragend", ()=>{ draftLatLng = draftMarker.getLatLng(); });
+    exitPlacementMode();
+    openFiche(null);
+    return;
+  }
+  if(selectedId){ closeFiche(); }
+});
+
+document.addEventListener("keydown", (e)=>{
+  if(e.key !== "Escape") return;
+  if(document.getElementById("fichePanel").classList.contains("open")){ closeFiche(); }
+  else if(placementMode){ exitPlacementMode(); }
+});
+
+document.getElementById("btnFitAll").addEventListener("click", ()=>{
+  closeFiche();
+  activeCity = ""; activeFilter = "tous"; searchQuery = "";
+  const si = document.getElementById("searchInput"); if(si) si.value = "";
+  renderAll();
+  const pts = DB.sites.filter(s=>typeof s.lat==="number"&&typeof s.lng==="number").map(s=>[s.lat,s.lng]);
+  if(pts.length){ map.fitBounds(L.latLngBounds(pts).pad(0.3)); }
+});
+
+/* --------------------------- Villes / Secteurs (regroupement / filtre) --------------------------- */
+function villeFieldDef(){ return DB.schema.find(f=>f.id==="ville"); }
+function secteurFieldDef(){ return DB.schema.find(f=>f.id==="secteur"); }
+function allCityValues(){
+  const vf = villeFieldDef();
+  const set = new Set();
+  if(vf) (vf.options||[]).forEach(o=> set.add(o));
+  DB.sites.forEach(s=>{ const v = getField(s,"ville"); if(v) set.add(String(v)); });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+function allSecteurValues(){
+  const sf = secteurFieldDef();
+  const set = new Set();
+  if(sf) (sf.options||[]).forEach(o=> set.add(o));
+  DB.sites.forEach(s=>{ const v = getField(s,"secteur"); if(v) set.add(String(v)); });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+// Applique le filtre ville ET le filtre secteur/tournée — combinables
+// (ex : « Bordeaux » + « Tournée Rive Droite »).
+function sitesInScope(list){
+  let out = list;
+  if(activeCity) out = out.filter(s=> String(getField(s,"ville")||"") === activeCity);
+  if(activeSecteur) out = out.filter(s=> String(getField(s,"secteur")||"") === activeSecteur);
+  return out;
+}
+function renderCityFilter(){
+  const wrap = document.getElementById("cityFilterWrap");
+  const vf = villeFieldDef();
+  if(!vf){ wrap.innerHTML = ""; wrap.style.display = "none"; return; }
+  wrap.style.display = "";
+  const cities = allCityValues();
+  wrap.innerHTML = `<select id="citySelect"><option value="">Toutes les villes</option>${cities.map(c=>
+    `<option value="${escapeAttr(c)}" ${c===activeCity?"selected":""}>${escapeHtml(c)}</option>`
+  ).join("")}</select>`;
+  document.getElementById("citySelect").addEventListener("change", (e)=>{
+    activeCity = e.target.value;
+    renderAll();
+    const pts = filteredSites().filter(s=>typeof s.lat==="number"&&typeof s.lng==="number").map(s=>[s.lat,s.lng]);
+    if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.3));
+  });
+}
+function renderSecteurFilter(){
+  const wrap = document.getElementById("secteurFilterWrap");
+  if(!wrap) return;
+  const sf = secteurFieldDef();
+  const secteurs = allSecteurValues();
+  if(!sf || (!secteurs.length && !activeSecteur)){ wrap.innerHTML = ""; wrap.style.display = "none"; return; }
+  wrap.style.display = "";
+  wrap.innerHTML = `<select id="secteurSelect"><option value="">Tous les secteurs / tournées</option>${secteurs.map(sec=>
+    `<option value="${escapeAttr(sec)}" ${sec===activeSecteur?"selected":""}>${escapeHtml(sec)}</option>`
+  ).join("")}</select>`;
+  document.getElementById("secteurSelect").addEventListener("change", (e)=>{
+    activeSecteur = e.target.value;
+    renderAll();
+    const pts = filteredSites().filter(s=>typeof s.lat==="number"&&typeof s.lng==="number").map(s=>[s.lat,s.lng]);
+    if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.3));
+  });
+}
+
+/* --------------------------- Rendu — topbar ---------------------------- */
+function renderTopbar(){
+  const cur = currentCampaign();
+  const wrap = document.getElementById("campaignChipWrap");
+  wrap.innerHTML = `<select id="campaignSelect">${DB.campaigns.map(c=>
+    `<option value="${c.id}" ${c.id===cur.id?"selected":""}>${escapeHtml(c.nom)}</option>`
+  ).join("")}</select><span>${fmtDate(cur.date_debut)} → ${fmtDate(cur.date_fin)}</span>`;
+  document.getElementById("campaignSelect").addEventListener("change", (e)=>{
+    DB.currentCampaignId = e.target.value;
+    try{ localStorage.setItem("supervision_bornes_current_campaign", DB.currentCampaignId); }catch(err){}
+    closeFiche();
+    renderAll();
+  });
+
+  const counts = {vert:0,jaune:0,rouge:0};
+  sitesInScope(DB.sites).forEach(s=> counts[statusOf(s)]++ );
+  document.getElementById("statusCounts").innerHTML = Object.keys(STATUS).map(k=>
+    `<span class="c" style="color:${STATUS[k].color}"><span class="swatch" style="background:${STATUS[k].color}"></span>${counts[k]}</span>`
+  ).join("");
+}
+
+/* ------------------------- Rendu — liste latérale ------------------------ */
+function filteredSites(){
+  let list = sitesInScope(DB.sites.slice());
+  if(activeFilter !== "tous"){
+    if(activeFilter === "incomplet") list = list.filter(s=>!ficheComplete(s));
+    else if(activeFilter === "echeance") list = list.filter(s=> isEcheanceProche(s));
+    else list = list.filter(s=> statusOf(s) === activeFilter);
+  }
+  if(searchQuery.trim()){
+    const q = searchQuery.trim().toLowerCase();
+    list = list.filter(s => Object.values(s.fields||{}).some(v => String(v??"").toLowerCase().includes(q)));
+  }
+  return list;
+}
+
+function renderFilterChips(){
+  const alerteJ = Number(currentCampaign().alerte_jours)||30;
+  const defs = [
+    {key:"tous", label:"Tous"},
+    {key:"rouge", label:"Rouge", color:STATUS.rouge.color},
+    {key:"jaune", label:"Jaune", color:STATUS.jaune.color},
+    {key:"vert", label:"Vert", color:STATUS.vert.color},
+    {key:"echeance", label:`Échéance ≤ ${alerteJ}j`, color:"#d97706"},
+    {key:"incomplet", label:"Fiches incomplètes"},
+  ];
+  document.getElementById("filterChips").innerHTML = defs.map(d=>
+    `<button class="chip ${activeFilter===d.key?"active":""}" data-filter="${d.key}">${d.color?`<span class="swatch" style="background:${d.color}"></span>`:""}${d.label}</button>`
+  ).join("");
+  document.querySelectorAll(".chip").forEach(el=>{
+    el.addEventListener("click", ()=>{ activeFilter = el.dataset.filter; renderAll(); });
+  });
+}
+
+// « Urgence » : rouge d'abord, puis jaune, puis vert ; à l'intérieur d'un
+// même statut, le site sans passage depuis le plus longtemps en premier
+// (jamais fait = le plus urgent). « Nom » : ordre alphabétique classique.
+const STATUS_ORDER = { rouge:0, jaune:1, vert:2 };
+function sortComparator(a, b){
+  if(sortMode === "nom"){
+    return String(siteTitle(a)).localeCompare(String(siteTitle(b)));
+  }
+  const sa = statusOf(a), sb = statusOf(b);
+  if(STATUS_ORDER[sa] !== STATUS_ORDER[sb]) return STATUS_ORDER[sa] - STATUS_ORDER[sb];
+  const la = globalLastMaintenance(a), lb = globalLastMaintenance(b);
+  const ta = la ? la.getTime() : -Infinity;
+  const tb = lb ? lb.getTime() : -Infinity;
+  if(ta !== tb) return ta - tb; // le plus ancien (ou jamais fait) en premier
+  return String(siteTitle(a)).localeCompare(String(siteTitle(b)));
+}
+
+document.getElementById("sortToggle").addEventListener("click", (e)=>{
+  const btn = e.target.closest("button[data-sort]");
+  if(!btn) return;
+  sortMode = btn.dataset.sort;
+  document.querySelectorAll("#sortToggle button[data-sort]").forEach(b=>b.classList.toggle("active", b===btn));
+  renderList();
+});
+
+function renderList(){
+  const tf = titleFieldDef();
+  const list = filteredSites().sort(sortComparator);
+  const el = document.getElementById("siteList");
+  if(list.length === 0){
+    el.innerHTML = `<div class="empty-list">Aucun site ne correspond.<br>Ajustez la recherche ou les filtres.</div>`;
+    return;
+  }
+  el.innerHTML = list.map(s=>{
+    const st = statusOf(s);
+    const addr = getField(s,"adresse") || "Adresse non renseignée";
+    const extras = DB.schema
+      .filter(f=> f.show_in_list && f.id!==tf.id && f.id!=="adresse")
+      .map(f=> getField(s,f.id))
+      .filter(v=> v!==undefined && v!==null && String(v).trim()!=="");
+    return `<div class="site-row ${selectedId===s.id?"selected":""}" data-id="${s.id}">
+      <span class="status-dot" style="background:${STATUS[st].color}"></span>
+      <div class="site-row-main">
+        <div class="site-ref">${escapeHtml(siteTitle(s))} ${!ficheComplete(s)?'<span class="incomplete-badge">Incomplet</span>':""}</div>
+        <div class="site-addr">${escapeHtml(addr)}</div>
+        ${extras.length?`<div class="site-tag">${extras.map(escapeHtml).join(" · ")}</div>`:""}
+      </div>
+    </div>`;
+  }).join("");
+  el.querySelectorAll(".site-row").forEach(row=>{
+    row.addEventListener("click", ()=>{
+      const site = DB.sites.find(s=>s.id===row.dataset.id);
+      if(site){ map.setView([site.lat,site.lng], Math.max(map.getZoom(),17), {animate:true}); openFiche(site.id); }
+    });
+  });
+}
+
+function renderAll(){
+  renderTopbar();
+  renderCityFilter();
+  renderSecteurFilter();
+  renderFilterChips();
+  renderList();
+  rebuildMap(filteredSites());
+}
+
+/* ------------------------------ Fiche site ------------------------------ */
+function renderFieldInput(f, val){
+  const v = (val===undefined||val===null) ? "" : val;
+  const dis = role!=="admin" ? "disabled" : "";
+  switch(f.type){
+    case "textarea": return `<textarea id="ff_${f.id}" ${dis}>${escapeHtml(v)}</textarea>`;
+    case "number":   return `<input type="number" id="ff_${f.id}" value="${escapeAttr(v)}" ${dis}>`;
+    case "date":     return `<input type="date" id="ff_${f.id}" value="${escapeAttr(v)}" ${dis}>`;
+    case "select": {
+      let opts = (f.options||[]).slice();
+      if(v && !opts.includes(String(v))) opts = opts.concat([String(v)]);
+      const optsHtml = opts.length
+        ? opts.map(o=>`<option ${String(o)===String(v)?"selected":""}>${escapeHtml(o)}</option>`).join("")
+        : `<option value="">(aucune option définie)</option>`;
+      return `<select id="ff_${f.id}" ${dis}>${optsHtml}</select>`;
+    }
+    default: return `<input type="text" id="ff_${f.id}" value="${escapeAttr(v)}" ${dis}>`;
+  }
+}
+
+function openFiche(id){
+  selectedId = id;
+  const isNew = !id;
+  const site = isNew ? {
+    id: uid("s"),
+    lat: draftLatLng ? draftLatLng.lat : null, lng: draftLatLng ? draftLatLng.lng : null,
+    created_at: TODAY.toISOString().slice(0,10),
+    fields: Object.fromEntries(DB.schema.map(f=>[f.id, f.default||""])),
+    maintenance: {}
+  } : DB.sites.find(s=>s.id===id);
+  if(!site) return;
+
+  const readOnly = role !== "admin";
+  const camp = currentCampaign();
+  const st = statusOf(site);
+  const deadline = statusDeadlineInfo(site, camp);
+  const tf = titleFieldDef();
+  const maintVal = (site.maintenance && site.maintenance[camp.id]) || "";
+  const otherHistory = DB.campaigns.filter(c=>c.id!==camp.id)
+    .map(c=>({ nom:c.nom, val: site.maintenance ? site.maintenance[c.id] : null }))
+    .filter(x=>x.val);
+
+  const panel = document.getElementById("fichePanel");
+
+  const bodyFields = DB.schema.filter(f=> f.id !== tf.id).map(f=>{
+    const val = getField(site, f.id);
+    if(f.id === "adresse"){
+      return `<div class="field">
+        <label>${escapeHtml(f.label)}${f.required?" *":""}</label>
+        <div class="geo-row">${renderFieldInput(f, val)}${!readOnly?`<button class="small-btn" id="f_geocode">Localiser</button>`:""}</div>
+        <div class="hint" id="f_geoHint">${(site.lat&&site.lng)?`Position : ${site.lat.toFixed(5)}, ${site.lng.toFixed(5)} — glissez le repère sur la carte pour ajuster.`:"Aucune position définie — tapez une adresse puis « Localiser », ou cliquez directement sur la carte."}</div>
+      </div>`;
+    }
+    return `<div class="field"><label>${escapeHtml(f.label)}${f.required?" *":""}</label>${renderFieldInput(f, val)}</div>`;
+  }).join("");
+
+  panel.innerHTML = `
+    <div class="fiche-head">
+      <span class="status-dot" style="background:${STATUS[st].color}"></span>
+      <div class="fiche-title">
+        <input class="ref-input" id="ff_${tf.id}" placeholder="${escapeAttr(tf.label)}" value="${escapeAttr(getField(site,tf.id))}" ${readOnly?"disabled":""}>
+        <div class="fiche-sub">${isNew?"Nouveau site — fiche à compléter":"Créé le "+fmtDate(site.created_at)}</div>
+      </div>
+      <button class="close-x" id="f_close" title="Fermer (Échap)">✕</button>
+    </div>
+    <div class="fiche-body">
+      ${readOnly?`<div class="readonly-note">Mode lecture seule — passez en Admin pour modifier cette fiche.</div>`:""}
+      <div class="field">
+        <label>Statut — ${escapeHtml(camp.nom)}</label>
+        <span class="status-pill" style="background:${STATUS[st].color}22;color:${STATUS[st].color}">${STATUS[st].label}</span>
+        <div class="hint">Fréquence détectée : <b>${siteFrequency(site)==="annuelle"?"Annuelle (1x/an)":"Semestrielle (2x/an)"}</b>. Calculé à partir de la maintenance enregistrée et du seuil de retard de la campagne (⚙️ Paramètres → Campagnes).</div>
+        ${st!=="vert" ? `<div class="hint">${deadline.joursRestants>=0 ? `Échéance : passera « très en retard » dans <b>${deadline.joursRestants} j</b> si aucun passage.` : `En retard de <b>${Math.abs(deadline.joursRestants)} j</b> par rapport au seuil « très en retard ».`}</div>` : ""}
+      </div>
+      <div class="field">
+        <label>Dernière maintenance — ${escapeHtml(camp.nom)}</label>
+        <input type="date" id="ff_maintenance" value="${escapeAttr(maintVal)}" ${readOnly?"disabled":""}>
+        ${otherHistory.length?`<div class="hint">Autres campagnes : ${otherHistory.map(h=>`${escapeHtml(h.nom)} → ${fmtDate(h.val)}`).join(" · ")}</div>`:""}
+      </div>
+      ${bodyFields}
+    </div>
+    <div class="fiche-footer">
+      <button class="ghost-btn" id="f_closeBtn" style="flex:none;padding:10px 16px;">Fermer</button>
+      ${!readOnly?`<button class="primary-btn" id="f_save">${isNew?"Créer le site":"Enregistrer"}</button>`:""}
+      ${!readOnly && !isNew?`<button class="danger-btn" id="f_delete">Supprimer</button>`:""}
+    </div>
+  `;
+  panel.classList.add("open");
+  document.getElementById("f_close").addEventListener("click", closeFiche);
+  document.getElementById("f_closeBtn").addEventListener("click", closeFiche);
+
+  if(isNew && site.lat && site.lng){
+    if(draftMarker) map.removeLayer(draftMarker);
+    draftMarker = L.marker([site.lat,site.lng], {draggable:!readOnly}).addTo(map);
+    draftMarker.on("dragend", ()=>{
+      const ll = draftMarker.getLatLng();
+      const hintEl = document.getElementById("f_geoHint");
+      if(hintEl) hintEl.textContent = `Position : ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)} — glissez le repère sur la carte pour ajuster.`;
+    });
+  }
+
+  if(!readOnly){
+    const geoBtn = document.getElementById("f_geocode");
+    if(geoBtn) geoBtn.addEventListener("click", async ()=>{
+      const q = document.getElementById("ff_adresse").value.trim();
+      if(!q) return toast("Saisissez une adresse à localiser.");
+      geoBtn.textContent = "..."; geoBtn.disabled = true;
+      try{
+        const res = await geocode(q);
+        if(res){
+          if(draftMarker) map.removeLayer(draftMarker);
+          draftMarker = L.marker([res.lat,res.lon], {draggable:true}).addTo(map);
+          draftMarker.on("dragend", ()=>{
+            const ll = draftMarker.getLatLng();
+            document.getElementById("f_geoHint").textContent = `Position : ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)} — glissez le repère sur la carte pour ajuster.`;
+          });
+          map.setView([res.lat,res.lon], 17, {animate:true});
+          document.getElementById("f_geoHint").textContent = `Position : ${res.lat.toFixed(5)}, ${res.lon.toFixed(5)} — glissez le repère sur la carte pour ajuster.`;
+          toast("Adresse localisée. Ajustez le repère si besoin.");
+        } else {
+          toast("Adresse introuvable — placez le repère manuellement sur la carte.");
+        }
+      }catch(e){
+        toast("Géocodage indisponible (connexion internet requise).");
+      }
+      geoBtn.textContent = "Localiser"; geoBtn.disabled = false;
+    });
+
+    document.getElementById("f_save").addEventListener("click", async ()=>{
+      const ll = draftMarker ? draftMarker.getLatLng() : (site.lat&&site.lng ? {lat:site.lat,lng:site.lng} : null);
+      if(!ll){ toast("Placez le site sur la carte (bouton « Ajouter un site » puis cliquez sur la carte)."); return; }
+      const titleVal = document.getElementById("ff_"+tf.id).value.trim();
+      if(!titleVal){ toast(`Le champ « ${tf.label} » est obligatoire.`); return; }
+      const fields = {};
+      DB.schema.forEach(f=>{
+        const el = document.getElementById("ff_"+f.id);
+        let v = el ? el.value : (site.fields ? site.fields[f.id] : "");
+        if(f.type==="number") v = (v===""||v===undefined) ? "" : Number(v);
+        else if(typeof v === "string") v = v.trim();
+        fields[f.id] = v;
+      });
+      const maintenance = { ...(site.maintenance||{}) };
+      const maintInputVal = document.getElementById("ff_maintenance").value;
+      if(maintInputVal) maintenance[camp.id] = maintInputVal; else delete maintenance[camp.id];
+
+      const updated = { ...site, lat: ll.lat, lng: ll.lng, fields, maintenance, updated_at: TODAY.toISOString().slice(0,10) };
+      const saveBtn = document.getElementById("f_save");
+      saveBtn.disabled = true; saveBtn.textContent = "Enregistrement...";
+      try{
+        await setDoc(doc(sitesCol, updated.id), updated);
+        const idx = DB.sites.findIndex(s=>s.id===site.id);
+        if(idx>=0) DB.sites[idx] = updated; else DB.sites.push(updated);
+        if(draftMarker){ map.removeLayer(draftMarker); draftMarker=null; }
+        draftLatLng = null;
+        selectedId = updated.id;
+        openFiche(updated.id);
+        toast(isNew ? "Site créé." : "Modifications enregistrées.");
+      }catch(e){
+        toast("Erreur d'enregistrement : "+e.message);
+        saveBtn.disabled = false; saveBtn.textContent = isNew?"Créer le site":"Enregistrer";
+      }
+    });
+
+    const delBtn = document.getElementById("f_delete");
+    if(delBtn) delBtn.addEventListener("click", async ()=>{
+      if(!confirm(`Supprimer définitivement le site « ${siteTitle(site)} » ?`)) return;
+      try{
+        await deleteDoc(doc(sitesCol, site.id));
+        DB.sites = DB.sites.filter(s=>s.id!==site.id);
+        closeFiche();
+        renderAll();
+        toast("Site supprimé.");
+      }catch(e){
+        toast("Erreur de suppression : "+e.message);
+      }
+    });
+  }
+
+  renderList();
+}
+
+function closeFiche(){
+  selectedId = null;
+  document.getElementById("fichePanel").classList.remove("open");
+  document.getElementById("fichePanel").innerHTML = "";
+  if(draftMarker){ map.removeLayer(draftMarker); draftMarker=null; }
+  draftLatLng = null;
+  renderList();
+}
+
+/* ---------------------------- Géocodage (Nominatim) ---------------------------- */
+async function geocode(query){
+  const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(query);
+  const res = await fetch(url, { headers: { "Accept-Language":"fr" } });
+  const data = await res.json();
+  if(data && data[0]) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+  return null;
+}
+
+/* ------------------------------ Placement mode ------------------------------ */
+function enterPlacementMode(){
+  if(role!=="admin") return;
+  placementMode = true;
+  document.getElementById("placementBanner").style.display = "flex";
+  document.getElementById("map").style.cursor = "crosshair";
+}
+function exitPlacementMode(){
+  placementMode = false;
+  document.getElementById("placementBanner").style.display = "none";
+  document.getElementById("map").style.cursor = "";
+}
+document.getElementById("btnCancelPlacement").addEventListener("click", exitPlacementMode);
+document.getElementById("btnAddSite").addEventListener("click", ()=>{
+  if(role!=="admin"){ toast("Passez en mode Admin pour ajouter un site."); return; }
+  enterPlacementMode();
+});
+
+/* --------------------- Itinéraire optimisé (tournée) --------------------- */
+// Calcule un ordre de passage optimisé pour les sites actuellement filtrés
+// (idéal combiné au filtre Secteur/Tournée). Méthode principale : OSRM, un
+// service public et gratuit qui calcule un vrai trajet sur le réseau routier.
+// Repli automatique : plus proche voisin à vol d'oiseau si OSRM est
+// injoignable (pas de connexion, service public surchargé, etc.), avec un
+// avertissement clair dans le panneau de résultat sur la méthode utilisée —
+// même logique de robustesse que pour les tuiles de la carte (MAPTILER_KEY).
+let routeLayer = null;
+let routeMarkersLayer = null;
+
+function haversineKm(a, b){
+  const R = 6371;
+  const toRad = d => d*Math.PI/180;
+  const dLat = toRad(b.lat-a.lat), dLng = toRad(b.lng-a.lng);
+  const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function nearestNeighborOrder(points, startIdx){
+  const n = points.length;
+  const visited = new Array(n).fill(false);
+  const order = [startIdx];
+  visited[startIdx] = true;
+  for(let step=1; step<n; step++){
+    const last = points[order[order.length-1]];
+    let best=-1, bestD=Infinity;
+    for(let i=0;i<n;i++){
+      if(visited[i]) continue;
+      const d = haversineKm(last, points[i]);
+      if(d<bestD){ bestD=d; best=i; }
+    }
+    order.push(best);
+    visited[best] = true;
+  }
+  return order;
+}
+function getCurrentPositionSafe(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){ resolve(null); return; }
+    const timer = setTimeout(()=> resolve(null), 4000);
+    navigator.geolocation.getCurrentPosition(
+      pos=>{ clearTimeout(timer); resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+      ()=>{ clearTimeout(timer); resolve(null); },
+      { timeout:4000, maximumAge:60000 }
+    );
+  });
+}
+async function osrmTrip(points){
+  // points: [{lat,lng}, ...] — le premier point est imposé comme départ (source=first).
+  const coordsStr = points.map(p=>`${p.lng},${p.lat}`).join(";");
+  const url = `https://router.project-osrm.org/trip/v1/driving/${coordsStr}?source=first&roundtrip=false&overview=full&geometries=geojson`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error("OSRM HTTP "+res.status);
+  const data = await res.json();
+  if(data.code !== "Ok" || !data.trips || !data.trips[0]) throw new Error("OSRM: "+data.code);
+  // data.waypoints[i].waypoint_index = position du point d'entrée i dans le trajet optimisé.
+  const visitOrder = points.map((_,i)=>i).sort((a,b)=> data.waypoints[a].waypoint_index - data.waypoints[b].waypoint_index);
+  return {
+    order: visitOrder,
+    geometry: data.trips[0].geometry,
+    distanceKm: data.trips[0].distance/1000,
+    durationMin: data.trips[0].duration/60,
+    method: "osrm"
+  };
+}
+function fallbackTrip(points){
+  const order = nearestNeighborOrder(points, 0);
+  let distKm = 0;
+  for(let i=0;i<order.length-1;i++) distKm += haversineKm(points[order[i]], points[order[i+1]]);
+  return {
+    order,
+    geometry: { type:"LineString", coordinates: order.map(i=>[points[i].lng, points[i].lat]) },
+    distanceKm: distKm,
+    durationMin: null,
+    method: "fallback"
+  };
+}
+function clearRoute(){
+  if(routeLayer){ map.removeLayer(routeLayer); routeLayer=null; }
+  if(routeMarkersLayer){ map.removeLayer(routeMarkersLayer); routeMarkersLayer=null; }
+}
+function drawRouteOnMap(trip, sitesOrdered){
+  clearRoute();
+  const coords = trip.geometry.coordinates.map(c=>[c[1],c[0]]);
+  routeLayer = L.polyline(coords, { color:"#2563eb", weight:4, opacity:0.75, dashArray: trip.method==="fallback" ? "6,6" : null }).addTo(map);
+  routeMarkersLayer = L.layerGroup().addTo(map);
+  let stopNum = 0;
+  sitesOrdered.forEach(site=>{
+    const isStart = !!site.__isStart;
+    if(!isStart) stopNum++;
+    const icon = L.divIcon({
+      className:"",
+      html:`<div style="background:${isStart?"#475569":"#2563eb"};color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${isStart?"13px":"11.5px"};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">${isStart?"📍":stopNum}</div>`,
+      iconSize:[24,24], iconAnchor:[12,12]
+    });
+    L.marker([site.lat, site.lng], {icon}).addTo(routeMarkersLayer);
+  });
+  map.fitBounds(routeLayer.getBounds().pad(0.15));
+}
+function showRoutePanel(trip, sitesOrdered, usedStart){
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const methodNote = trip.method==="osrm"
+    ? `Itinéraire calculé sur le réseau routier réel via <b>OSRM</b> (service public gratuit).`
+    : `⚠️ Service de calcul d'itinéraire indisponible — ordre <b>approximatif</b> basé sur la distance à vol d'oiseau entre les sites (pas forcément le trajet routier réel).`;
+  let n = 0;
+  const stopsHtml = sitesOrdered.map(s=>{
+    if(s.__isStart) return `<div class="fmrow"><b>📍 Départ — votre position</b></div>`;
+    n++;
+    return `<div class="fmrow"><b>${n}.</b> ${escapeHtml(siteTitle(s))}<div class="hint">${escapeHtml(getField(s,"adresse")||"")}</div></div>`;
+  }).join("");
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-head"><h3>Itinéraire optimisé — ${sitesOrdered.length} site(s)</h3><button class="close-x" id="r_close">✕</button></div>
+      <div class="modal-body">
+        <div class="hint" style="margin-bottom:12px;">${methodNote}${usedStart?" Départ : votre position actuelle.":""}</div>
+        <div class="hint" style="margin-bottom:12px;">
+          Distance totale estimée : <b>${trip.distanceKm.toFixed(1)} km</b>
+          ${trip.durationMin!==null ? ` · Durée estimée : <b>${Math.round(trip.durationMin)} min</b>` : ""}
+        </div>
+        ${stopsHtml}
+      </div>
+      <div class="modal-foot">
+        <button class="ghost-btn" id="r_clear" style="flex:none;padding:9px 16px;">Effacer du plan</button>
+        <button class="primary-btn" id="r_done" style="flex:none;padding:9px 20px;">Fermer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener("click", (e)=>{ if(e.target===overlay) close(); });
+  document.getElementById("r_close").addEventListener("click", close);
+  document.getElementById("r_done").addEventListener("click", close);
+  document.getElementById("r_clear").addEventListener("click", ()=>{ clearRoute(); close(); });
+}
+async function planItinerary(){
+  const sites = filteredSites().filter(s=> typeof s.lat==="number" && typeof s.lng==="number");
+  if(sites.length < 2){
+    toast("Il faut au moins 2 sites géolocalisés dans la sélection actuelle (filtrez par secteur ou ville pour cibler une tournée).");
+    return;
+  }
+  let sitesToRoute = sites;
+  if(sites.length > 25){
+    toast(`${sites.length} sites sélectionnés — seuls les 25 plus urgents seront inclus dans l'itinéraire.`);
+    sitesToRoute = sites.slice().sort(sortComparator).slice(0, 25);
+  }
+
+  toast("Calcul de l'itinéraire...");
+  const myPos = await getCurrentPositionSafe();
+  let points = sitesToRoute.map(s=>({lat:s.lat, lng:s.lng}));
+  let ordered = sitesToRoute.slice();
+  const usedStart = !!myPos;
+  if(myPos){
+    points = [myPos].concat(points);
+    ordered = [{ __isStart:true, lat:myPos.lat, lng:myPos.lng }].concat(ordered);
+  }
+
+  let trip;
+  try{
+    trip = await osrmTrip(points);
+  }catch(e){
+    trip = fallbackTrip(points);
+  }
+  const sitesOrdered = trip.order.map(i=> ordered[i]);
+  drawRouteOnMap(trip, sitesOrdered);
+  showRoutePanel(trip, sitesOrdered, usedStart);
+}
+document.getElementById("btnItineraire").addEventListener("click", planItinerary);
+
+/* ------------------------- Gestionnaire de champs (self-service) ------------------------- */
+function fieldRowHtml(f){
+  const isSelect = f.type==="select";
+  return `<div class="fmrow" data-fid="${f.id}">
+    <div class="fmrow-top">
+      <div class="fmrow-arrows"><button type="button" class="fm-up" title="Monter">▲</button><button type="button" class="fm-down" title="Descendre">▼</button></div>
+      <input class="fmrow-label" value="${escapeAttr(f.label)}">
+      <select class="fmrow-type" ${f.system?"disabled":""}>${FIELD_TYPES.map(t=>`<option value="${t.value}" ${t.value===f.type?"selected":""}>${t.label}</option>`).join("")}</select>
+      ${f.system ? `<span class="fmrow-lock" title="Champ système">🔒</span>` : `<button type="button" class="fmrow-del" title="Supprimer">✕</button>`}
+    </div>
+    <div class="fmrow-options" style="${isSelect?"":"display:none;"}">
+      <input class="fmrow-optvals" placeholder="Options séparées par des virgules" value="${escapeAttr((f.options||[]).join(", "))}">
+    </div>
+    <div class="fmrow-bottom">
+      <label><input type="checkbox" class="fmrow-required" ${f.required?"checked":""}> Obligatoire</label>
+      <label><input type="checkbox" class="fmrow-showlist" ${f.show_in_list?"checked":""}> Afficher dans la liste</label>
+      <input class="fmrow-default" placeholder="Valeur par défaut (optionnel)" value="${escapeAttr(f.default||"")}">
+    </div>
+    ${f.system?`<div class="fmrow-sys-note">🔒 Champ système : ${
+      f.id==="adresse" ? "utilisé par le bouton « Localiser » (géocodage)." :
+      f.id==="ville" ? "utilisé par le sélecteur de ville en haut de la liste et pour filtrer la carte." :
+      f.id==="secteur" ? "utilisé par le sélecteur de secteur/tournée (combinable avec le filtre ville) et par l'itinéraire optimisé." :
+      f.id==="frequence" ? "utilisé pour calculer le statut rouge/jaune/vert (une option doit contenir le mot « annuel » pour être reconnue comme fréquence annuelle, les autres comptent comme semestrielles)." :
+      "utilisé par l'application."
+    } Il ne peut pas être supprimé, mais peut être renommé, réordonné${f.type==="select"?", et ses options peuvent être modifiées librement":""}.</div>`:""}
+  </div>`;
+}
+function wireFieldRow(row, container){
+  const typeSel = row.querySelector(".fmrow-type");
+  if(typeSel) typeSel.addEventListener("change", ()=>{
+    row.querySelector(".fmrow-options").style.display = typeSel.value==="select" ? "" : "none";
+  });
+  const delBtn = row.querySelector(".fmrow-del");
+  if(delBtn) delBtn.addEventListener("click", ()=>{
+    if(container.querySelectorAll(".fmrow").length<=1){ toast("Il doit rester au moins un champ."); return; }
+    if(!confirm("Supprimer ce champ ? Les données déjà saisies resteront enregistrées mais ne seront plus affichées.")) return;
+    row.remove();
+  });
+  const up = row.querySelector(".fm-up");
+  if(up) up.addEventListener("click", ()=>{ const prev=row.previousElementSibling; if(prev && prev.classList.contains("fmrow")) container.insertBefore(row, prev); });
+  const down = row.querySelector(".fm-down");
+  if(down) down.addEventListener("click", ()=>{ const next=row.nextElementSibling; if(next && next.classList.contains("fmrow")) container.insertBefore(next, row); });
+}
+function renderFieldManager(container){
+  container.innerHTML = DB.schema.map(fieldRowHtml).join("") + `<button type="button" class="fm-add-btn" id="fm_add">+ Ajouter un champ</button>`;
+  container.querySelectorAll(".fmrow").forEach(row=> wireFieldRow(row, container));
+  const addBtn = container.querySelector("#fm_add");
+  addBtn.addEventListener("click", ()=>{
+    const label = prompt("Nom du nouveau champ :", "");
+    if(label===null || !label.trim()) return;
+    const existingIds = Array.from(container.querySelectorAll(".fmrow")).map(r=>r.dataset.fid);
+    const id = uniqueFieldId(slugify(label), existingIds);
+    const newField = { id, label:label.trim(), type:"text", system:false, required:false, show_in_list:false, default:"" };
+    const wrap = document.createElement("div");
+    wrap.innerHTML = fieldRowHtml(newField);
+    const rowEl = wrap.firstElementChild;
+    container.insertBefore(rowEl, addBtn);
+    wireFieldRow(rowEl, container);
+    rowEl.querySelector(".fmrow-label").focus();
+    rowEl.querySelector(".fmrow-label").select();
+  });
+}
+
+/* --------------------- Gestionnaire de campagnes (self-service) --------------------- */
+function campaignRowHtml(c){
+  return `<div class="fmrow" data-cid="${c.id}">
+    <div class="field"><label>Nom de la campagne</label><input class="cmrow-nom" value="${escapeAttr(c.nom)}"></div>
+    <div class="field-row">
+      <div class="field"><label>Début</label><input type="date" class="cmrow-debut" value="${c.date_debut||""}"></div>
+      <div class="field"><label>Fin</label><input type="date" class="cmrow-fin" value="${c.date_fin||""}"></div>
+    </div>
+    <div class="field"><label>Seuil « très en retard » (jours sans entretien)</label><input type="number" min="1" class="cmrow-seuil" value="${c.seuil_retard_jours}"><div class="hint">182 jours ≈ 6 mois</div></div>
+    <div class="field"><label>Alerte « échéance à venir » (jours avant ce seuil)</label><input type="number" min="1" class="cmrow-alerte" value="${c.alerte_jours!==undefined?c.alerte_jours:30}"><div class="hint">Signale les sites encore jaunes qui vont bientôt passer rouge.</div></div>
+    <div class="cmrow-actions">
+      <button type="button" class="small-btn cmrow-dup">Dupliquer</button>
+      <button type="button" class="small-btn cmrow-del" style="color:var(--red);">Supprimer</button>
+    </div>
+  </div>`;
+}
+function wireCampaignRow(row, container){
+  const del = row.querySelector(".cmrow-del");
+  del.addEventListener("click", ()=>{
+    if(container.querySelectorAll(".fmrow").length<=1){ toast("Il doit rester au moins une campagne."); return; }
+    if(!confirm("Supprimer cette campagne ? L'historique de maintenance associé restera enregistré mais ne sera plus affiché.")) return;
+    row.remove();
+  });
+  const dup = row.querySelector(".cmrow-dup");
+  dup.addEventListener("click", ()=>{
+    // Décale automatiquement d'un semestre (6 mois) pour préparer la campagne suivante.
+    const newC = {
+      id: uid("camp"),
+      nom: row.querySelector(".cmrow-nom").value.trim() + " (suite)",
+      date_debut: addMonths(row.querySelector(".cmrow-debut").value, 6),
+      date_fin: addMonths(row.querySelector(".cmrow-fin").value, 6),
+      seuil_retard_jours: Number(row.querySelector(".cmrow-seuil").value)||182,
+      alerte_jours: Number(row.querySelector(".cmrow-alerte").value)||30,
+    };
+    const wrap = document.createElement("div");
+    wrap.innerHTML = campaignRowHtml(newC);
+    const rowEl = wrap.firstElementChild;
+    row.parentElement.insertBefore(rowEl, row.nextSibling);
+    wireCampaignRow(rowEl, container);
+    rowEl.querySelector(".cmrow-nom").focus();
+    rowEl.querySelector(".cmrow-nom").select();
+  });
+}
+function renderCampaignManager(container){
+  container.innerHTML = DB.campaigns.map(campaignRowHtml).join("") + `<button type="button" class="fm-add-btn" id="cm_add">+ Nouvelle campagne</button>`;
+  container.querySelectorAll(".fmrow").forEach(row=> wireCampaignRow(row, container));
+  const addBtn = container.querySelector("#cm_add");
+  addBtn.addEventListener("click", ()=>{
+    const newC = { id: uid("camp"), nom:"Nouvelle campagne", date_debut:"", date_fin:"", seuil_retard_jours:182, alerte_jours:30 };
+    const wrap = document.createElement("div");
+    wrap.innerHTML = campaignRowHtml(newC);
+    const rowEl = wrap.firstElementChild;
+    container.insertBefore(rowEl, addBtn);
+    wireCampaignRow(rowEl, container);
+    rowEl.querySelector(".cmrow-nom").focus();
+    rowEl.querySelector(".cmrow-nom").select();
+  });
+}
+
+/* --------------------- Gestionnaire d'accès (self-service) --------------------- */
+// Ne gère que le rôle (admin/lecture) associé à un e-mail. La création du
+// compte de connexion (e-mail + mot de passe) se fait à part, depuis la
+// console Firebase → Authentication → « Add user » — voir le rappel affiché
+// dans l'onglet. Retirer l'accès ici coupe l'accès à l'appli mais ne
+// supprime pas le compte de connexion Firebase.
+async function renderAccessManager(container){
+  container.innerHTML = `
+    <div class="fm-hint">
+      Donne ou retire l'accès à l'application par e-mail. Il faut d'abord créer le compte de connexion depuis la console Firebase (Authentication → « Add user », e-mail + mot de passe), <b>puis</b> lui attribuer un rôle ici. Retirer l'accès ici coupe l'accès à l'appli mais ne supprime pas le compte de connexion.
+    </div>
+    <div id="accessList"><div class="hint">Chargement...</div></div>
+    <div class="fmrow" style="margin-top:10px;">
+      <div class="field"><label>E-mail à autoriser</label><input type="email" id="acc_email" placeholder="prenom.nom@exemple.fr"></div>
+      <div class="field"><label>Rôle</label><select id="acc_role"><option value="viewer">Lecture seule</option><option value="admin">Admin</option></select></div>
+      <button type="button" class="primary-btn" id="acc_add">Donner l'accès</button>
+    </div>`;
+  const listEl = container.querySelector("#accessList");
+  async function refresh(){
+    listEl.innerHTML = `<div class="hint">Chargement...</div>`;
+    try{
+      const snap = await getDocs(authorizedUsersCol);
+      if(snap.empty){ listEl.innerHTML = `<div class="hint">Aucun accès configuré.</div>`; return; }
+      listEl.innerHTML = snap.docs.map(d=>{
+        const data = d.data();
+        return `<div class="fmrow" data-email="${escapeAttr(d.id)}" style="display:flex; align-items:center; gap:10px;">
+          <div style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; font-weight:600;">${escapeHtml(d.id)}</div>
+          <select class="acc-role-sel">
+            <option value="viewer" ${data.role==="viewer"?"selected":""}>Lecture seule</option>
+            <option value="admin" ${data.role==="admin"?"selected":""}>Admin</option>
+          </select>
+          <button type="button" class="small-btn acc-del" style="color:var(--red);">Retirer</button>
+        </div>`;
+      }).join("");
+      listEl.querySelectorAll(".acc-role-sel").forEach(sel=>{
+        sel.addEventListener("change", async ()=>{
+          const email = sel.closest(".fmrow").dataset.email;
+          try{ await setDoc(doc(authorizedUsersCol, email), { role: sel.value }, { merge:true }); toast("Rôle mis à jour pour "+email+"."); }
+          catch(e){ toast("Erreur : "+e.message); }
+        });
+      });
+      listEl.querySelectorAll(".acc-del").forEach(btn=>{
+        btn.addEventListener("click", async ()=>{
+          const row = btn.closest(".fmrow");
+          const email = row.dataset.email;
+          if(!confirm(`Retirer l'accès de ${email} ?`)) return;
+          try{ await deleteDoc(doc(authorizedUsersCol, email)); row.remove(); toast("Accès retiré."); }
+          catch(e){ toast("Erreur : "+e.message); }
+        });
+      });
+    }catch(e){
+      listEl.innerHTML = `<div class="hint">Erreur de chargement : ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  refresh();
+  container.querySelector("#acc_add").addEventListener("click", async ()=>{
+    const email = container.querySelector("#acc_email").value.trim().toLowerCase();
+    const roleVal = container.querySelector("#acc_role").value;
+    if(!email || !email.includes("@")){ toast("E-mail invalide."); return; }
+    try{
+      await setDoc(doc(authorizedUsersCol, email), { role: roleVal, added_at: TODAY.toISOString().slice(0,10) });
+      container.querySelector("#acc_email").value = "";
+      toast("Accès donné à "+email+".");
+      refresh();
+    }catch(e){ toast("Erreur : "+e.message); }
+  });
+}
+
+/* -------------------------------- Paramètres -------------------------------- */
+document.getElementById("btnSettings").addEventListener("click", openSettings);
+function openSettings(){
+  const readOnly = role !== "admin";
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:640px;">
+      <div class="modal-head"><h3>Paramètres</h3><button class="close-x" id="m_close">✕</button></div>
+      <div class="modal-body">
+        <div class="tabbar">
+          <button type="button" class="tabbtn active" data-tab="campaign">Campagnes</button>
+          <button type="button" class="tabbtn" data-tab="fields">Champs de la fiche</button>
+          ${!readOnly?`<button type="button" class="tabbtn" data-tab="access">Accès</button>`:""}
+        </div>
+        <div class="tabpane active" id="tab-campaign">
+          <div class="fm-hint">
+            Crée autant de campagnes que nécessaire — par exemple la campagne en cours et la suivante, préparée à l'avance (bouton « Dupliquer », qui décale automatiquement les dates de 6 mois).
+            Le sélecteur en haut de l'écran permet de basculer l'affichage (statuts rouge/jaune/vert) d'une campagne à l'autre à tout moment.<br><br>
+            Convention habituelle : deux semestres calendaires — <b>1er janvier au 30 juin</b>, puis <b>1er juillet au 31 décembre</b> — avec un objectif de moins de 6 mois (≈ 182 jours) entre deux passages sur un même site.
+            ${readOnly?"<br><br><b>Mode lecture seule — passe en Admin pour modifier les campagnes.</b>":""}
+          </div>
+          <div id="campaignManager"></div>
+        </div>
+        <div class="tabpane" id="tab-fields">
+          <div class="fm-hint">
+            Ajoute, renomme, réordonne ou supprime librement les champs d'une fiche site — sans avoir besoin de repasser par moi.
+            Le <b>premier champ de la liste</b> sert de titre affiché sur la carte et dans la liste (utilise les flèches ▲▼ pour changer l'ordre).
+            ${readOnly?"<br><br><b>Mode lecture seule — passe en Admin pour modifier les champs.</b>":""}
+          </div>
+          <div id="fieldManager"></div>
+        </div>
+        ${!readOnly?`<div class="tabpane" id="tab-access">
+          <div id="accessManager"></div>
+        </div>`:""}
+      </div>
+      <div class="modal-foot">
+        <button class="ghost-btn" id="m_cancel" style="flex:none;padding:9px 16px;">Fermer</button>
+        ${!readOnly?`<button class="primary-btn" id="m_save" style="flex:none;padding:9px 20px;">Enregistrer</button>`:""}
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener("click", (e)=>{ if(e.target===overlay) close(); });
+  document.getElementById("m_close").addEventListener("click", close);
+  document.getElementById("m_cancel").addEventListener("click", close);
+
+  overlay.querySelectorAll(".tabbtn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      overlay.querySelectorAll(".tabbtn").forEach(b=>b.classList.toggle("active", b===btn));
+      overlay.querySelectorAll(".tabpane").forEach(p=>p.classList.remove("active"));
+      overlay.querySelector("#tab-"+btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  const cmContainer = document.getElementById("campaignManager");
+  const fmContainer = document.getElementById("fieldManager");
+  if(readOnly){
+    cmContainer.innerHTML = DB.campaigns.map(c=>
+      `<div class="fmrow" style="opacity:.65;"><b>${escapeHtml(c.nom)}</b><div class="hint">${fmtDate(c.date_debut)} → ${fmtDate(c.date_fin)} · seuil ${c.seuil_retard_jours} j</div></div>`
+    ).join("");
+    fmContainer.innerHTML = DB.schema.map(f=>
+      `<div class="fmrow" style="opacity:.65;"><div class="fmrow-top"><input class="fmrow-label" value="${escapeAttr(f.label)}" disabled>
+      <span class="fmrow-lock">${f.system?"🔒":""}</span></div></div>`
+    ).join("");
+  } else {
+    renderCampaignManager(cmContainer);
+    renderFieldManager(fmContainer);
+    renderAccessManager(document.getElementById("accessManager"));
+  }
+
+  if(!readOnly){
+    document.getElementById("m_save").addEventListener("click", async ()=>{
+      // Campagnes
+      const cRows = Array.from(cmContainer.querySelectorAll(".fmrow"));
+      const newCampaigns = cRows.map(row=>({
+        id: row.dataset.cid,
+        nom: row.querySelector(".cmrow-nom").value.trim() || "Campagne",
+        date_debut: row.querySelector(".cmrow-debut").value,
+        date_fin: row.querySelector(".cmrow-fin").value,
+        seuil_retard_jours: Number(row.querySelector(".cmrow-seuil").value)||182,
+        alerte_jours: Number(row.querySelector(".cmrow-alerte").value)||30,
+      }));
+      if(newCampaigns.length===0){ toast("Il doit rester au moins une campagne."); return; }
+
+      // Champs
+      const fRows = Array.from(fmContainer.querySelectorAll(".fmrow"));
+      const newSchema = fRows.map(row=>{
+        const id = row.dataset.fid;
+        const label = row.querySelector(".fmrow-label").value.trim() || id;
+        const type = row.querySelector(".fmrow-type").value;
+        const optEl = row.querySelector(".fmrow-optvals");
+        const options = optEl ? optEl.value.split(",").map(s=>s.trim()).filter(Boolean) : [];
+        const required = row.querySelector(".fmrow-required").checked;
+        const show_in_list = row.querySelector(".fmrow-showlist").checked;
+        const def = row.querySelector(".fmrow-default").value;
+        const existing = DB.schema.find(x=>x.id===id);
+        return { id, label, type, options: type==="select"?options:[], system: existing?!!existing.system:false, required, show_in_list, default: def };
+      });
+      if(newSchema.length===0){ toast("Il doit rester au moins un champ."); return; }
+
+      const saveBtn = document.getElementById("m_save");
+      saveBtn.disabled = true; saveBtn.textContent = "Enregistrement...";
+      try{
+        await setDoc(campaignsDocRef, { list: newCampaigns });
+        await setDoc(schemaDocRef, { list: newSchema });
+        DB.campaigns = newCampaigns;
+        if(!DB.campaigns.some(c=>c.id===DB.currentCampaignId)) DB.currentCampaignId = DB.campaigns[0].id;
+        DB.schema = newSchema;
+        renderAll();
+        close();
+        toast("Paramètres enregistrés.");
+      }catch(e){
+        toast("Erreur d'enregistrement : "+e.message);
+        saveBtn.disabled = false; saveBtn.textContent = "Enregistrer";
+      }
+    });
+  }
+}
+
+/* ------------------------------- Import CSV ------------------------------- */
+document.getElementById("btnImport").addEventListener("click", openImport);
+function openImport(){
+  if(role!=="admin"){ toast("Passez en mode Admin pour importer des sites."); return; }
+  const tf = titleFieldDef();
+  const csvCols = ["lat","lng"].concat(DB.schema.map(f=>f.id)).concat(DB.campaigns.map(c=>"maintenance_"+c.id));
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-head"><h3>Importer des sites (CSV)</h3><button class="close-x" id="i_close">✕</button></div>
+      <div class="modal-body">
+        <div class="file-drop">
+          Choisissez un fichier CSV, ou collez son contenu ci-dessous.
+          <input type="file" id="i_file" accept=".csv,text/csv">
+        </div>
+        <textarea class="csv-area" id="i_text" placeholder="${escapeAttr(csvCols.join(","))}"></textarea>
+        <div class="csv-help">
+          Colonnes reconnues (basées sur les champs et campagnes actuels — ⚙️ Paramètres) : <b>${csvCols.map(escapeHtml).join(", ")}</b>.<br>
+          La colonne <b>${escapeHtml(tf.id)}</b> (${escapeHtml(tf.label)}) est obligatoire pour qu'une ligne soit importée. Les colonnes <b>maintenance_&lt;id campagne&gt;</b> au format AAAA-MM-JJ.<br>
+          Si lat/lng sont vides, vous pourrez positionner chaque site ensuite depuis sa fiche (bouton « Localiser »).
+        </div>
+        <div id="i_result"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="ghost-btn" id="i_cancel" style="flex:none;padding:9px 16px;">Fermer</button>
+        <button class="primary-btn" id="i_run" style="flex:none;padding:9px 20px;">Importer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener("click", (e)=>{ if(e.target===overlay) close(); });
+  document.getElementById("i_close").addEventListener("click", close);
+  document.getElementById("i_cancel").addEventListener("click", close);
+  document.getElementById("i_file").addEventListener("change", (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=> document.getElementById("i_text").value = reader.result;
+    reader.readAsText(file, "utf-8");
+  });
+  document.getElementById("i_run").addEventListener("click", async ()=>{
+    const raw = document.getElementById("i_text").value;
+    const resEl = document.getElementById("i_result");
+    const runBtn = document.getElementById("i_run");
+    if(!raw.trim()){ resEl.className="import-result err"; resEl.textContent="Aucun contenu à importer."; return; }
+    try{
+      const rows = parseCsv(raw);
+      if(rows.length===0){ resEl.className="import-result err"; resEl.textContent="Fichier vide ou illisible."; return; }
+      let created=0, skipped=0;
+      const newSites = [];
+      rows.forEach(r=>{
+        const titleVal = (r[tf.id]||"").trim();
+        if(!titleVal){ skipped++; return; }
+        const fields = {};
+        DB.schema.forEach(f=>{
+          let raw2 = r[f.id]; if(raw2===undefined) raw2="";
+          if(f.type==="number") fields[f.id] = raw2===""? "" : Number(raw2);
+          else fields[f.id] = String(raw2).trim();
+        });
+        const maintenance = {};
+        DB.campaigns.forEach(c=>{ const v = r["maintenance_"+c.id]; if(v) maintenance[c.id] = v; });
+        const site = {
+          id: uid("s"),
+          lat: r.lat ? parseFloat(r.lat) : null,
+          lng: r.lng ? parseFloat(r.lng) : null,
+          fields, maintenance,
+          created_at: TODAY.toISOString().slice(0,10)
+        };
+        newSites.push(site);
+        created++;
+      });
+      runBtn.disabled = true; runBtn.textContent = "Import en cours...";
+      for(let i=0;i<newSites.length;i+=450){
+        const chunk = newSites.slice(i, i+450);
+        const batch = writeBatch(dbFs);
+        chunk.forEach(site=> batch.set(doc(sitesCol, site.id), site));
+        await batch.commit();
+      }
+      newSites.forEach(s=> DB.sites.push(s));
+      renderAll();
+      resEl.className="import-result ok";
+      resEl.textContent = `${created} site(s) importé(s)` + (skipped?`, ${skipped} ligne(s) ignorée(s) (« ${tf.label} » manquant).`:".");
+    }catch(err){
+      resEl.className="import-result err";
+      resEl.textContent = "Erreur d'import : " + err.message;
+    } finally {
+      runBtn.disabled = false; runBtn.textContent = "Importer";
+    }
+  });
+}
+function parseCsv(text){
+  const lines = text.replace(/\r\n/g,"\n").split("\n").filter(l=>l.trim().length>0);
+  if(lines.length<2) return [];
+  const headers = splitCsvLine(lines[0]).map(h=>h.trim());
+  const rows = [];
+  for(let i=1;i<lines.length;i++){
+    const cells = splitCsvLine(lines[i]);
+    const obj = {};
+    headers.forEach((h,idx)=> obj[h] = cells[idx] !== undefined ? cells[idx] : "");
+    rows.push(obj);
+  }
+  return rows;
+}
+function splitCsvLine(line){
+  const out = []; let cur=""; let inQuotes=false;
+  for(let i=0;i<line.length;i++){
+    const ch = line[i];
+    if(inQuotes){
+      if(ch === '"'){ if(line[i+1]==='"'){ cur+='"'; i++; } else inQuotes=false; }
+      else cur+=ch;
+    } else {
+      if(ch === '"') inQuotes=true;
+      else if(ch === ','){ out.push(cur); cur=""; }
+      else cur+=ch;
+    }
+  }
+  out.push(cur);
+  return out.map(s=>s.trim());
+}
+
+/* -------------------------------- Export -------------------------------- */
+document.getElementById("btnExportCsv").addEventListener("click", ()=>{
+  const cols = ["lat","lng"].concat(DB.schema.map(f=>f.id)).concat(DB.campaigns.map(c=>"maintenance_"+c.id));
+  const esc = (v)=> `"${String(v??"").replace(/"/g,'""')}"`;
+  const lines = [cols.join(",")].concat(DB.sites.map(s=> cols.map(c=>{
+    if(c==="lat") return esc(s.lat);
+    if(c==="lng") return esc(s.lng);
+    if(c.indexOf("maintenance_")===0){ const cid=c.slice("maintenance_".length); return esc(s.maintenance?s.maintenance[cid]:""); }
+    return esc(getField(s,c));
+  }).join(",")));
+  downloadFile("sites_bornes_export.csv", lines.join("\n"), "text/csv;charset=utf-8");
+});
+document.getElementById("btnExportJson").addEventListener("click", ()=>{
+  downloadFile("supervision_bornes_sauvegarde.json", JSON.stringify(DB, null, 2), "application/json");
+});
+function downloadFile(filename, content, mime){
+  const blob = new Blob([content], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+/* ------------------------------- Connexion ------------------------------- */
+document.getElementById("auth_submit").addEventListener("click", doSignIn);
+document.getElementById("auth_password").addEventListener("keydown", (e)=>{ if(e.key==="Enter") doSignIn(); });
+document.getElementById("auth_email").addEventListener("keydown", (e)=>{ if(e.key==="Enter") document.getElementById("auth_password").focus(); });
+async function doSignIn(){
+  const email = document.getElementById("auth_email").value.trim();
+  const pass = document.getElementById("auth_password").value;
+  const errEl = document.getElementById("auth_error");
+  errEl.textContent = "";
+  if(!email || !pass){ errEl.textContent = "Renseigne l'e-mail et le mot de passe."; return; }
+  const btn = document.getElementById("auth_submit");
+  btn.disabled = true; btn.textContent = "Connexion...";
+  try{
+    await signInWithEmailAndPassword(auth, email, pass);
+  }catch(e){
+    errEl.textContent = "Connexion refusée — vérifie l'e-mail et le mot de passe.";
+  }
+  btn.disabled = false; btn.textContent = "Se connecter";
+}
+document.getElementById("auth_signout").addEventListener("click", ()=> signOut(auth));
+
+onAuthStateChanged(auth, async (user)=>{
+  detachFirestoreListeners();
+  closeFiche();
+  if(!user){
+    role = "viewer"; currentUserEmail = null;
+    document.getElementById("app").style.display = "none";
+    document.getElementById("authScreen").style.display = "flex";
+    document.getElementById("authFormWrap").style.display = "";
+    document.getElementById("authUnauthorized").style.display = "none";
+    document.getElementById("auth_password").value = "";
+    return;
+  }
+  const email = (user.email||"").toLowerCase();
+  let roleDoc = null;
+  try{
+    const snap = await getDoc(doc(authorizedUsersCol, email));
+    if(snap.exists()) roleDoc = snap.data();
+  }catch(e){ /* refusé par les règles si non autorisé -> roleDoc reste null */ }
+  if(!roleDoc || (roleDoc.role!=="admin" && roleDoc.role!=="viewer")){
+    document.getElementById("app").style.display = "none";
+    document.getElementById("authScreen").style.display = "flex";
+    document.getElementById("authFormWrap").style.display = "none";
+    document.getElementById("authUnauthorized").style.display = "";
+    return;
+  }
+  role = roleDoc.role;
+  currentUserEmail = email;
+  document.getElementById("authScreen").style.display = "none";
+  document.getElementById("app").style.display = "flex";
+  // La carte Leaflet a été initialisée pendant que #app était display:none
+  // (écran de connexion affiché) : son conteneur avait alors une taille
+  // nulle, donc Leaflet n'a chargé que quelques tuiles dans un coin. On lui
+  // demande de recalculer sa taille maintenant que #app est réellement visible.
+  requestAnimationFrame(()=>{ map.invalidateSize(); });
+  setTimeout(()=>{ map.invalidateSize(); }, 300);
+  document.getElementById("userBadge").innerHTML =
+    `<span class="role-pill ${role}">${role==="admin"?"Admin":"Lecture seule"}</span>` +
+    `<span class="email">${escapeHtml(email)}</span>` +
+    `<button class="icon-btn" id="btnSignOut" title="Se déconnecter"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>`;
+  document.getElementById("btnSignOut").addEventListener("click", ()=> signOut(auth));
+  document.getElementById("btnAddSite").disabled = role!=="admin";
+  attachFirestoreListeners();
+});
+
+/* ------------------------------ Recherche ------------------------------- */
+document.getElementById("searchInput").addEventListener("input", (e)=>{ searchQuery = e.target.value; renderList(); });
+
+/* ------------------------------ Sidebar mobile ---------------------------- */
+document.getElementById("btnToggleSidebar").addEventListener("click", ()=>{
+  document.getElementById("sidebar").classList.toggle("open");
+});
+
+/* --------------------------------- Toast --------------------------------- */
+let toastTimer=null;
+function toast(msg){
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> el.classList.remove("show"), 2800);
+}
+
+/* --------------------------------- Utils ---------------------------------- */
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+function fmtDate(s){ if(!s) return "—"; const d=parseDate(s); if(!d) return s; return d.toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric"}); }
+
+})();
+</script>
+</body>
+</html>
