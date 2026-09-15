@@ -119,6 +119,9 @@
   }
   .add-site-btn:hover{ background:#1d4ed8; }
   .add-site-btn:disabled{ background:var(--gray); cursor:not-allowed; }
+  .add-point-row{ display:flex; gap:6px; margin-top:6px; }
+  .add-point-row .small-btn{ flex:1; }
+  .add-point-row .small-btn:disabled{ opacity:.5; cursor:not-allowed; }
 
   .sidebar-list{ flex:1; overflow-y:auto; padding:6px 8px 14px; }
   .site-row{
@@ -172,6 +175,7 @@
   .legend-sep{ height:1px; background:var(--border); margin:6px 0; }
   .legend-icon{ width:16px; height:16px; border-radius:50%; background:#64748b; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
   .legend-icon svg{ width:10px; height:10px; }
+  .legend-line{ display:inline-block; width:16px; height:3px; border-radius:2px; flex-shrink:0; }
   .legend-toggle{
     position:absolute; bottom:16px; left:16px; z-index:401; width:36px; height:36px; border-radius:50%;
     border:1px solid var(--border); background:var(--panel); box-shadow:var(--shadow); align-items:center;
@@ -208,6 +212,10 @@
   .field-row .field{ flex:1; }
   .geo-row{ display:flex; gap:8px; flex-wrap:wrap; }
   .geo-row input{ flex:1; min-width:120px; }
+  .link-list{ max-height:150px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:4px 8px; background:var(--bg); }
+  .link-check{ display:flex; align-items:center; gap:8px; padding:5px 2px; font-size:13px; cursor:pointer; }
+  .link-check input{ width:auto; flex:none; }
+  .link-swatch{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-left:4px; vertical-align:middle; }
   .small-btn{
     border:1px solid var(--border); background:var(--panel); border-radius:8px; padding:8px 11px; font-weight:600; font-size:12.5px; color:var(--text);
     white-space:nowrap;
@@ -390,6 +398,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Ajouter un site
         </button>
+        <div class="add-point-row">
+          <button class="small-btn" id="btnAddPop" title="Ajouter un POP réseau (cœur de réseau)">🔷 + POP</button>
+          <button class="small-btn" id="btnAddDepart" title="Ajouter un départ électrique">⚡ + Départ élec.</button>
+        </div>
         <button class="add-site-btn" id="btnItineraire" title="Calcule un ordre de passage optimisé pour les sites actuellement filtrés (idéal combiné au filtre Secteur/Tournée)" style="margin-top:6px; background:var(--panel); color:var(--text); border:1px solid var(--border);">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
           Itinéraire optimisé
@@ -417,6 +429,11 @@
         <div class="legend-row"><span class="legend-icon" id="legendIconRecharge"></span>Borne de recharge véhicule</div>
         <div class="legend-row"><span class="legend-icon" id="legendIconControle"></span>Borne de contrôle d'accès</div>
         <div class="legend-row"><span class="legend-icon" id="legendIconBarriere"></span>Barrière levante</div>
+        <div class="legend-sep"></div>
+        <div class="legend-row"><span class="legend-icon" id="legendIconPop" style="border-radius:4px;"></span>POP réseau</div>
+        <div class="legend-row"><span class="legend-icon" id="legendIconDepart" style="border-radius:4px;transform:rotate(45deg);"></span>Départ électrique</div>
+        <div class="legend-row"><span class="legend-line" id="legendLinePop"></span>Lien vers le POP relié</div>
+        <div class="legend-row"><span class="legend-line" id="legendLineDepart"></span>Lien vers le départ électrique relié</div>
       </div>
 
       <div class="fiche-panel" id="fichePanel"></div>
@@ -457,6 +474,8 @@ const sitesCol = collection(dbFs, "sites");
 const authorizedUsersCol = collection(dbFs, "authorizedUsers");
 const campaignsDocRef = doc(dbFs, "config", "campaigns");
 const schemaDocRef = doc(dbFs, "config", "schema");
+const popsCol = collection(dbFs, "pops");
+const departsCol = collection(dbFs, "departsElectriques");
 
 (function(){
 "use strict";
@@ -554,13 +573,13 @@ function patchSchemaAdditions(schema){
   return changed;
 }
 
-let DB = { campaigns: [], schema: [], sites: [], currentCampaignId: null };
-let unsubSites=null, unsubCampaigns=null, unsubSchema=null;
-let fsReady = { campaigns:false, schema:false, sites:false };
+let DB = { campaigns: [], schema: [], sites: [], pops: [], departs: [], currentCampaignId: null };
+let unsubSites=null, unsubCampaigns=null, unsubSchema=null, unsubPops=null, unsubDeparts=null;
+let fsReady = { campaigns:false, schema:false, sites:false, pops:false, departs:false };
 let firstFitDone = false;
 
 function attachFirestoreListeners(){
-  fsReady = { campaigns:false, schema:false, sites:false };
+  fsReady = { campaigns:false, schema:false, sites:false, pops:false, departs:false };
   unsubSchema = onSnapshot(schemaDocRef, async (snap)=>{
     if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
       DB.schema = snap.data().list;
@@ -593,17 +612,29 @@ function attachFirestoreListeners(){
     fsReady.sites = true;
     maybeRenderAll();
   }, (err)=> toast("Erreur de synchronisation (sites) : "+err.message));
+  unsubPops = onSnapshot(popsCol, (snap)=>{
+    DB.pops = snap.docs.map(d=> ({ id:d.id, nom:"", notes:"", lat:null, lng:null, ...d.data() }));
+    fsReady.pops = true;
+    maybeRenderAll();
+  }, (err)=> toast("Erreur de synchronisation (POP) : "+err.message));
+  unsubDeparts = onSnapshot(departsCol, (snap)=>{
+    DB.departs = snap.docs.map(d=> ({ id:d.id, nom:"", notes:"", lat:null, lng:null, ...d.data() }));
+    fsReady.departs = true;
+    maybeRenderAll();
+  }, (err)=> toast("Erreur de synchronisation (départs électriques) : "+err.message));
 }
 function detachFirestoreListeners(){
   if(unsubSites) unsubSites();
   if(unsubCampaigns) unsubCampaigns();
   if(unsubSchema) unsubSchema();
-  unsubSites = unsubCampaigns = unsubSchema = null;
-  fsReady = { campaigns:false, schema:false, sites:false };
+  if(unsubPops) unsubPops();
+  if(unsubDeparts) unsubDeparts();
+  unsubSites = unsubCampaigns = unsubSchema = unsubPops = unsubDeparts = null;
+  fsReady = { campaigns:false, schema:false, sites:false, pops:false, departs:false };
   firstFitDone = false;
 }
 function maybeRenderAll(){
-  if(!fsReady.campaigns || !fsReady.schema || !fsReady.sites) return;
+  if(!fsReady.campaigns || !fsReady.schema || !fsReady.sites || !fsReady.pops || !fsReady.departs) return;
   renderAll();
   if(!firstFitDone){
     firstFitDone = true;
@@ -683,6 +714,15 @@ const EQUIPMENT_LABELS = {
   barriere: "Barrière levante",
   autre: "Autre / non catégorisé"
 };
+
+/* ---- POP réseau & Départs électriques : points d'infrastructure liés aux
+   sites (fibre / RJ45 pour les POP, alimentation pour les départs). Ils sont
+   affichés avec une icône distincte (carré vs losange) et une couleur dédiée,
+   et un trait de la même couleur relie un site à ses POP / départs quand on
+   clique dessus, pour retrouver rapidement l'origine réseau ou électrique. */
+const LINK_COLORS = { pop: "#2563eb", depart: "#9333ea" };
+const POP_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="#fff"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="5" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M7 12h8m0 0-3-5.5M15 12l4-5M15 12l4 7" stroke="#fff" stroke-width="1.6" fill="none"/></svg>';
+const DEPART_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="#fff"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>';
 (function initLegendIcons(){
   const map1 = document.getElementById("legendIconRecharge");
   const map2 = document.getElementById("legendIconControle");
@@ -690,6 +730,14 @@ const EQUIPMENT_LABELS = {
   if(map1) map1.innerHTML = EQUIPMENT_ICONS.recharge;
   if(map2) map2.innerHTML = EQUIPMENT_ICONS.controle;
   if(map3) map3.innerHTML = EQUIPMENT_ICONS.barriere;
+  const popIcon = document.getElementById("legendIconPop");
+  const depIcon = document.getElementById("legendIconDepart");
+  if(popIcon){ popIcon.innerHTML = POP_SVG; popIcon.style.background = LINK_COLORS.pop; }
+  if(depIcon){ depIcon.innerHTML = DEPART_SVG; depIcon.style.background = LINK_COLORS.depart; }
+  const popLine = document.getElementById("legendLinePop");
+  const depLine = document.getElementById("legendLineDepart");
+  if(popLine) popLine.style.background = LINK_COLORS.pop;
+  if(depLine) depLine.style.background = LINK_COLORS.depart;
 })();
 
 function computeStatus(site, campaign){
@@ -758,9 +806,12 @@ let activeSecteur = ""; // "" = tous les secteurs / tournées
 let sortMode = "urgence"; // "urgence" | "nom"
 let searchQuery = "";
 let selectedId = null;
+let selectedPointKind = null; // "pop" | "depart" | null — fiche POP/départ actuellement ouverte
+let selectedPointId = null;
 let placementMode = false;
+let placementKind = "site"; // "site" | "pop" | "depart" — type de point en cours de placement
 let draftLatLng = null;
-let movingSiteId = null; // id du site en cours de repositionnement (bouton "Repositionner"), sinon null
+let movingTarget = null; // { kind:"site"|"pop"|"depart", id } — repositionnement d'un point existant via le bouton dédié
 
 /* -------------------------------- Carte -------------------------------- */
 // Les grands fournisseurs de tuiles gratuits (OpenStreetMap, CARTO...) bloquent
@@ -846,21 +897,103 @@ function rebuildMap(list){
   });
 }
 
+/* ------------------- POP réseau & Départs électriques ------------------- */
+// Points d'infrastructure indépendants des sites (pas de statut de
+// maintenance). Affichés en dehors du regroupement (cluster) des sites pour
+// rester repérables à tous les niveaux de zoom.
+const POINT_TYPES = {
+  pop:     { col: popsCol,     list: ()=>DB.pops,     label:"POP réseau",          color: LINK_COLORS.pop,    glyph: POP_SVG,    shape:"square"  },
+  depart:  { col: departsCol,  list: ()=>DB.departs,  label:"départ électrique",   color: LINK_COLORS.depart, glyph: DEPART_SVG, shape:"diamond" }
+};
+function pointDivIcon(kind){
+  const cfg = POINT_TYPES[kind];
+  const outer = cfg.shape==="diamond"
+    ? `width:18px;height:18px;transform:rotate(45deg);border-radius:4px;`
+    : `width:20px;height:20px;border-radius:5px;`;
+  const innerFix = cfg.shape==="diamond" ? `transform:rotate(-45deg);display:flex;` : `display:flex;`;
+  return L.divIcon({
+    className:"leaflet-marker-point",
+    html:`<div style="${outer}background:${cfg.color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;"><span style="${innerFix}">${cfg.glyph}</span></div>`,
+    iconSize:[20,20], iconAnchor:[10,10]
+  });
+}
+const popLayerGroup = L.layerGroup().addTo(map);
+const departLayerGroup = L.layerGroup().addTo(map);
+function pointMarker(kind, point){
+  const cfg = POINT_TYPES[kind];
+  const m = L.marker([point.lat, point.lng], { icon: pointDivIcon(kind), draggable: role==="admin" });
+  m.on("click", ()=> openPointFiche(kind, point.id));
+  if(role==="admin"){
+    m.on("dragend", async ()=>{
+      const ll = m.getLatLng();
+      try{
+        await setDoc(doc(cfg.col, point.id), { lat: ll.lat, lng: ll.lng }, { merge:true });
+        toast(`Position de « ${point.nom||cfg.label} » mise à jour.`);
+      }catch(e){
+        toast("Erreur lors du déplacement : "+e.message);
+        m.setLatLng([point.lat, point.lng]);
+      }
+    });
+  }
+  return m;
+}
+function rebuildPoints(){
+  popLayerGroup.clearLayers();
+  departLayerGroup.clearLayers();
+  DB.pops.forEach(p=>{ if(typeof p.lat==="number" && typeof p.lng==="number") popLayerGroup.addLayer(pointMarker("pop", p)); });
+  DB.departs.forEach(d=>{ if(typeof d.lat==="number" && typeof d.lng==="number") departLayerGroup.addLayer(pointMarker("depart", d)); });
+}
+
+/* --------- Traits de liaison site <-> POP / site <-> départ électrique --------- */
+const linkLinesGroup = L.layerGroup().addTo(map);
+function clearLinkLines(){ linkLinesGroup.clearLayers(); }
+function drawLinksForSite(site){
+  clearLinkLines();
+  if(typeof site.lat!=="number" || typeof site.lng!=="number") return;
+  (site.pop_ids||[]).forEach(pid=>{
+    const p = DB.pops.find(x=>x.id===pid);
+    if(p && typeof p.lat==="number") linkLinesGroup.addLayer(L.polyline([[site.lat,site.lng],[p.lat,p.lng]], {color:LINK_COLORS.pop, weight:3, opacity:.85, dashArray:"7,5"}));
+  });
+  (site.depart_ids||[]).forEach(did=>{
+    const d = DB.departs.find(x=>x.id===did);
+    if(d && typeof d.lat==="number") linkLinesGroup.addLayer(L.polyline([[site.lat,site.lng],[d.lat,d.lng]], {color:LINK_COLORS.depart, weight:3, opacity:.85, dashArray:"2,6"}));
+  });
+}
+function drawLinksForPoint(kind, point){
+  clearLinkLines();
+  if(typeof point.lat!=="number" || typeof point.lng!=="number") return;
+  const field = kind==="pop" ? "pop_ids" : "depart_ids";
+  DB.sites.filter(s=> Array.isArray(s[field]) && s[field].includes(point.id) && typeof s.lat==="number").forEach(s=>{
+    linkLinesGroup.addLayer(L.polyline([[s.lat,s.lng],[point.lat,point.lng]], {color:LINK_COLORS[kind], weight:3, opacity:.85, dashArray: kind==="pop"?"7,5":"2,6"}));
+  });
+}
+function linkedSitesListHtml(kind, pointId){
+  const field = kind==="pop" ? "pop_ids" : "depart_ids";
+  const linked = DB.sites.filter(s=> Array.isArray(s[field]) && s[field].includes(pointId));
+  if(!linked.length) return "Aucun site relié pour l'instant (à cocher depuis la fiche du site).";
+  return linked.map(s=> escapeHtml(siteTitle(s))).join(" · ");
+}
+
 // Clic sur la carte : en mode placement -> pose un repère ; sinon, clic sur
 // une zone vide -> referme la fiche ouverte (les clics sur un marqueur ne
 // remontent pas jusqu'ici, Leaflet les intercepte).
 map.on("click", (e)=>{
   if(placementMode){
     draftLatLng = e.latlng;
-    if(draftMarker) map.removeLayer(draftMarker);
-    draftMarker = L.marker(e.latlng, { draggable:true }).addTo(map);
-    draftMarker.on("dragend", ()=>{ draftLatLng = draftMarker.getLatLng(); });
-    const wasMoving = movingSiteId;
+    const kind = placementKind;
+    const target = movingTarget;
     exitPlacementMode();
-    openFiche(wasMoving || null);
+    if(kind === "site"){
+      if(draftMarker) map.removeLayer(draftMarker);
+      draftMarker = L.marker(e.latlng, { draggable:true }).addTo(map);
+      draftMarker.on("dragend", ()=>{ draftLatLng = draftMarker.getLatLng(); });
+      openFiche((target && target.kind==="site") ? target.id : null);
+    } else {
+      openPointFiche(kind, (target && target.kind===kind) ? target.id : null);
+    }
     return;
   }
-  if(selectedId){ closeFiche(); }
+  if(selectedId || selectedPointId){ closeFiche(); }
 });
 
 document.addEventListener("keydown", (e)=>{
@@ -1055,6 +1188,7 @@ function renderAll(){
   renderFilterChips();
   renderList();
   rebuildMap(filteredSites());
+  rebuildPoints();
 }
 
 /* ------------------------------ Fiche site ------------------------------ */
@@ -1079,6 +1213,8 @@ function renderFieldInput(f, val){
 
 function openFiche(id){
   selectedId = id;
+  selectedPointKind = null; selectedPointId = null;
+  clearLinkLines();
   const isNew = !id;
   const site = isNew ? {
     id: uid("s"),
@@ -1113,6 +1249,19 @@ function openFiche(id){
     return `<div class="field"><label>${escapeHtml(f.label)}${f.required?" *":""}</label>${renderFieldInput(f, val)}</div>`;
   }).join("");
 
+  const linkFieldHtml = (kind)=>{
+    const cfg = POINT_TYPES[kind];
+    const entities = cfg.list();
+    const selIds = (kind==="pop" ? site.pop_ids : site.depart_ids) || [];
+    const rows = entities.length
+      ? entities.map(e=>`<label class="link-check"><input type="checkbox" class="${kind}-check" value="${escapeAttr(e.id)}" ${selIds.includes(e.id)?"checked":""} ${readOnly?"disabled":""}><span>${escapeHtml(e.nom||"(sans nom)")}</span></label>`).join("")
+      : `<div class="hint">Aucun ${cfg.label} créé pour l'instant (bouton « + ${kind==="pop"?"POP":"Départ élec."} » dans la liste des sites).</div>`;
+    return `<div class="field">
+      <label>${kind==="pop"?"POP réseau reliés":"Départs électriques reliés"} <span class="link-swatch" style="background:${cfg.color}"></span></label>
+      <div class="link-list">${rows}</div>
+    </div>`;
+  };
+
   panel.innerHTML = `
     <div class="fiche-head">
       <span class="status-dot" style="background:${STATUS[st].color}"></span>
@@ -1136,6 +1285,8 @@ function openFiche(id){
         ${otherHistory.length?`<div class="hint">Autres campagnes : ${otherHistory.map(h=>`${escapeHtml(h.nom)} → ${fmtDate(h.val)}`).join(" · ")}</div>`:""}
       </div>
       ${bodyFields}
+      ${linkFieldHtml("pop")}
+      ${linkFieldHtml("depart")}
     </div>
     <div class="fiche-footer">
       <button class="ghost-btn" id="f_closeBtn" style="flex:none;padding:10px 16px;">Fermer</button>
@@ -1168,6 +1319,8 @@ function openFiche(id){
     });
     const hintEl = document.getElementById("f_geoHint");
     if(hintEl) hintEl.textContent = `Nouvelle position : ${draftLatLng.lat.toFixed(5)}, ${draftLatLng.lng.toFixed(5)} — glissez le repère pour ajuster, puis Enregistrer.`;
+  } else if(!isNew){
+    drawLinksForSite(site);
   }
 
   if(!readOnly){
@@ -1216,8 +1369,10 @@ function openFiche(id){
       const maintenance = { ...(site.maintenance||{}) };
       const maintInputVal = document.getElementById("ff_maintenance").value;
       if(maintInputVal) maintenance[camp.id] = maintInputVal; else delete maintenance[camp.id];
+      const pop_ids = Array.from(document.querySelectorAll(".pop-check:checked")).map(el=>el.value);
+      const depart_ids = Array.from(document.querySelectorAll(".depart-check:checked")).map(el=>el.value);
 
-      const updated = { ...site, lat: ll.lat, lng: ll.lng, fields, maintenance, updated_at: TODAY.toISOString().slice(0,10) };
+      const updated = { ...site, lat: ll.lat, lng: ll.lng, fields, maintenance, pop_ids, depart_ids, updated_at: TODAY.toISOString().slice(0,10) };
       const saveBtn = document.getElementById("f_save");
       saveBtn.disabled = true; saveBtn.textContent = "Enregistrement...";
       try{
@@ -1255,11 +1410,137 @@ function openFiche(id){
 
 function closeFiche(){
   selectedId = null;
+  selectedPointKind = null; selectedPointId = null;
   document.getElementById("fichePanel").classList.remove("open");
   document.getElementById("fichePanel").innerHTML = "";
   if(draftMarker){ map.removeLayer(draftMarker); draftMarker=null; }
   draftLatLng = null;
+  clearLinkLines();
   renderList();
+}
+
+/* --------------------------- Fiche POP / Départ électrique --------------------------- */
+function openPointFiche(kind, id){
+  const cfg = POINT_TYPES[kind];
+  selectedId = null;
+  selectedPointKind = kind;
+  selectedPointId = id;
+  clearLinkLines();
+  const isNew = !id;
+  const existing = isNew ? null : cfg.list().find(p=>p.id===id);
+  if(!isNew && !existing) return;
+  const point = isNew ? {
+    id: uid(kind),
+    nom:"", notes:"",
+    lat: draftLatLng ? draftLatLng.lat : null,
+    lng: draftLatLng ? draftLatLng.lng : null,
+    created_at: TODAY.toISOString().slice(0,10)
+  } : existing;
+
+  const readOnly = role !== "admin";
+  const panel = document.getElementById("fichePanel");
+  panel.innerHTML = `
+    <div class="fiche-head">
+      <span class="status-dot" style="background:${cfg.color}"></span>
+      <div class="fiche-title">
+        <input class="ref-input" id="pf_nom" placeholder="Nom du ${escapeAttr(cfg.label)}" value="${escapeAttr(point.nom||"")}" ${readOnly?"disabled":""}>
+        <div class="fiche-sub">${isNew?`Nouveau ${cfg.label} — fiche à compléter`:"Créé le "+fmtDate(point.created_at)}</div>
+      </div>
+      <button class="close-x" id="f_close" title="Fermer (Échap)">✕</button>
+    </div>
+    <div class="fiche-body">
+      ${readOnly?`<div class="readonly-note">Mode lecture seule — passez en Admin pour modifier cette fiche.</div>`:""}
+      <div class="field">
+        <label>Notes</label>
+        <textarea id="pf_notes" ${readOnly?"disabled":""}>${escapeHtml(point.notes||"")}</textarea>
+      </div>
+      <div class="field">
+        <label>Position</label>
+        <div class="hint" id="f_geoHint">${(point.lat&&point.lng)?`Position : ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)} — glissez le repère sur la carte pour ajuster.`:"Aucune position définie — cliquez sur la carte."}</div>
+        ${!readOnly && !isNew?`<button class="small-btn" id="f_reposition" type="button" style="margin-top:8px;">📍 Repositionner</button>`:""}
+      </div>
+      <div class="field">
+        <label>Sites reliés</label>
+        <div class="hint">${linkedSitesListHtml(kind, point.id)}</div>
+      </div>
+    </div>
+    <div class="fiche-footer">
+      <button class="ghost-btn" id="f_closeBtn" style="flex:none;padding:10px 16px;">Fermer</button>
+      ${!readOnly?`<button class="primary-btn" id="f_save">${isNew?"Créer":"Enregistrer"}</button>`:""}
+      ${!readOnly && !isNew?`<button class="danger-btn" id="f_delete">Supprimer</button>`:""}
+    </div>
+  `;
+  panel.classList.add("open");
+  document.getElementById("f_close").addEventListener("click", closeFiche);
+  document.getElementById("f_closeBtn").addEventListener("click", closeFiche);
+
+  if(isNew && point.lat && point.lng){
+    if(draftMarker) map.removeLayer(draftMarker);
+    draftMarker = L.marker([point.lat,point.lng], {draggable:!readOnly, icon: pointDivIcon(kind)}).addTo(map);
+    draftMarker.on("dragend", ()=>{
+      const ll = draftMarker.getLatLng();
+      const hintEl = document.getElementById("f_geoHint");
+      if(hintEl) hintEl.textContent = `Position : ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)} — glissez le repère sur la carte pour ajuster.`;
+    });
+  } else if(!isNew && !readOnly && draftLatLng){
+    if(draftMarker) map.removeLayer(draftMarker);
+    draftMarker = L.marker([draftLatLng.lat, draftLatLng.lng], {draggable:true, icon: pointDivIcon(kind)}).addTo(map);
+    draftMarker.on("dragend", ()=>{
+      const ll = draftMarker.getLatLng();
+      draftLatLng = ll;
+      const hintEl = document.getElementById("f_geoHint");
+      if(hintEl) hintEl.textContent = `Nouvelle position : ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)} — glissez le repère pour ajuster, puis Enregistrer.`;
+    });
+    const hintEl = document.getElementById("f_geoHint");
+    if(hintEl) hintEl.textContent = `Nouvelle position : ${draftLatLng.lat.toFixed(5)}, ${draftLatLng.lng.toFixed(5)} — glissez le repère pour ajuster, puis Enregistrer.`;
+  } else if(!isNew){
+    drawLinksForPoint(kind, point);
+  }
+
+  if(!readOnly){
+    const repoBtn = document.getElementById("f_reposition");
+    if(repoBtn) repoBtn.addEventListener("click", ()=> startMovePoint(kind, point));
+
+    document.getElementById("f_save").addEventListener("click", async ()=>{
+      const ll = draftMarker ? draftMarker.getLatLng() : (point.lat&&point.lng ? {lat:point.lat,lng:point.lng} : null);
+      if(!ll){ toast(`Placez le ${cfg.label} sur la carte (bouton « + » puis cliquez sur la carte).`); return; }
+      const nomVal = document.getElementById("pf_nom").value.trim();
+      if(!nomVal){ toast("Le nom est obligatoire."); return; }
+      const notesVal = document.getElementById("pf_notes").value.trim();
+      const updated = { ...point, nom: nomVal, notes: notesVal, lat: ll.lat, lng: ll.lng, updated_at: TODAY.toISOString().slice(0,10) };
+      const saveBtn = document.getElementById("f_save");
+      saveBtn.disabled = true; saveBtn.textContent = "Enregistrement...";
+      try{
+        await setDoc(doc(cfg.col, updated.id), updated);
+        const arr = cfg.list();
+        const idx = arr.findIndex(p=>p.id===point.id);
+        if(idx>=0) arr[idx] = updated; else arr.push(updated);
+        if(draftMarker){ map.removeLayer(draftMarker); draftMarker=null; }
+        draftLatLng = null;
+        openPointFiche(kind, updated.id);
+        toast(isNew ? `${cfg.label.charAt(0).toUpperCase()+cfg.label.slice(1)} créé.` : "Modifications enregistrées.");
+      }catch(e){
+        toast("Erreur d'enregistrement : "+e.message);
+        saveBtn.disabled = false; saveBtn.textContent = isNew?"Créer":"Enregistrer";
+      }
+    });
+
+    const delBtn = document.getElementById("f_delete");
+    if(delBtn) delBtn.addEventListener("click", async ()=>{
+      if(!confirm(`Supprimer définitivement « ${point.nom||cfg.label} » ? Les sites reliés perdront ce lien.`)) return;
+      try{
+        await deleteDoc(doc(cfg.col, point.id));
+        const arr = cfg.list();
+        const i = arr.findIndex(p=>p.id===point.id);
+        if(i>=0) arr.splice(i,1);
+        closeFiche();
+        renderAll();
+        toast(`${cfg.label.charAt(0).toUpperCase()+cfg.label.slice(1)} supprimé.`);
+      }catch(e){
+        toast("Erreur de suppression : "+e.message);
+      }
+    });
+  }
 }
 
 /* ---------------------------- Géocodage (Nominatim) ---------------------------- */
@@ -1272,31 +1553,50 @@ async function geocode(query){
 }
 
 /* ------------------------------ Placement mode ------------------------------ */
-function enterPlacementMode(message){
+function enterPlacementMode(kind, message){
   if(role!=="admin") return;
   placementMode = true;
+  placementKind = kind || "site";
   const banner = document.getElementById("placementBanner");
   const span = banner.querySelector("span");
-  if(span) span.textContent = message || "📍 Cliquez sur la carte à l'emplacement du site";
+  const defaultMsg = placementKind==="pop" ? "📍 Cliquez sur la carte à l'emplacement du POP"
+    : placementKind==="depart" ? "📍 Cliquez sur la carte à l'emplacement du départ électrique"
+    : "📍 Cliquez sur la carte à l'emplacement du site";
+  if(span) span.textContent = message || defaultMsg;
   banner.style.display = "flex";
   document.getElementById("map").style.cursor = "crosshair";
 }
 function exitPlacementMode(){
   placementMode = false;
-  movingSiteId = null;
+  movingTarget = null;
   document.getElementById("placementBanner").style.display = "none";
   document.getElementById("map").style.cursor = "";
 }
 function startMoveSite(site){
   if(role!=="admin") return;
-  movingSiteId = site.id;
+  movingTarget = { kind:"site", id: site.id };
   closeFiche();
-  enterPlacementMode(`📍 Cliquez sur la carte pour repositionner « ${siteTitle(site)} »`);
+  enterPlacementMode("site", `📍 Cliquez sur la carte pour repositionner « ${siteTitle(site)} »`);
+}
+function startMovePoint(kind, point){
+  if(role!=="admin") return;
+  movingTarget = { kind, id: point.id };
+  closeFiche();
+  const label = kind==="pop" ? "le POP" : "le départ électrique";
+  enterPlacementMode(kind, `📍 Cliquez sur la carte pour repositionner ${label} « ${point.nom||"(sans nom)"} »`);
 }
 document.getElementById("btnCancelPlacement").addEventListener("click", exitPlacementMode);
 document.getElementById("btnAddSite").addEventListener("click", ()=>{
   if(role!=="admin"){ toast("Passez en mode Admin pour ajouter un site."); return; }
-  enterPlacementMode();
+  enterPlacementMode("site");
+});
+document.getElementById("btnAddPop").addEventListener("click", ()=>{
+  if(role!=="admin"){ toast("Passez en mode Admin pour ajouter un POP."); return; }
+  enterPlacementMode("pop");
+});
+document.getElementById("btnAddDepart").addEventListener("click", ()=>{
+  if(role!=="admin"){ toast("Passez en mode Admin pour ajouter un départ électrique."); return; }
+  enterPlacementMode("depart");
 });
 
 /* --------------------- Itinéraire optimisé (tournée) --------------------- */
@@ -1984,6 +2284,8 @@ onAuthStateChanged(auth, async (user)=>{
     `<button class="icon-btn" id="btnSignOut" title="Se déconnecter"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>`;
   document.getElementById("btnSignOut").addEventListener("click", ()=> signOut(auth));
   document.getElementById("btnAddSite").disabled = role!=="admin";
+  document.getElementById("btnAddPop").disabled = role!=="admin";
+  document.getElementById("btnAddDepart").disabled = role!=="admin";
   attachFirestoreListeners();
 });
 
