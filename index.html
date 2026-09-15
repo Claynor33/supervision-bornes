@@ -31,7 +31,7 @@
   button{ cursor:pointer; }
 
   /* ---------- App shell ---------- */
-  #app{ display:flex; flex-direction:column; height:100vh; }
+  #app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
   .auth-screen{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); z-index:500; padding:16px; }
   .auth-card{ background:var(--panel); border-radius:14px; box-shadow:var(--shadow-lg); padding:28px 26px; width:100%; max-width:340px; }
   .user-badge{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-dim); white-space:nowrap; }
@@ -79,12 +79,17 @@
   .icon-btn:hover{ background:var(--gray-bg); color:var(--text); }
 
   /* ---------- Body layout ---------- */
-  .body-row{ flex:1; display:flex; min-height:0; }
+  /* position:relative ici est essentiel : sur mobile, le panneau des sites
+     (aside.sidebar) est en position:absolute pour glisser depuis la gauche.
+     Sans ancêtre positionné, il se plaquait sur tout l'écran (y compris la
+     barre du haut), cachant le bouton qui permet de le refermer. */
+  .body-row{ flex:1; display:flex; min-height:0; position:relative; }
 
   aside.sidebar{
     width:340px; min-width:340px; background:var(--panel); border-right:1px solid var(--border);
     display:flex; flex-direction:column; min-height:0;
   }
+  .sidebar-close{ display:none; position:absolute; top:calc(10px + env(safe-area-inset-top)); right:10px; z-index:5; background:var(--panel); }
   .sidebar-top{ padding:14px 14px 8px; border-bottom:1px solid var(--border-soft); flex-shrink:0;}
   .search-box{
     display:flex; align-items:center; gap:8px; background:var(--bg); border:1px solid var(--border);
@@ -134,6 +139,7 @@
 
   .sidebar-footer{
     border-top:1px solid var(--border-soft); padding:10px 14px; display:flex; gap:8px; flex-shrink:0;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom));
   }
   .ghost-btn{
     flex:1; background:var(--panel); border:1px solid var(--border); border-radius:8px;
@@ -286,6 +292,7 @@
     .fiche-panel{ width:100%; }
     .mobile-only{ display:flex !important; }
     .user-badge .email{ display:none; }
+    .sidebar-top{ padding-top:calc(52px + env(safe-area-inset-top)); }
   }
   /* Téléphone : la barre du haut passe sur plusieurs lignes bien organisées
      (au lieu de laisser les éléments déborder dans l'ordre du HTML), et le
@@ -365,6 +372,7 @@
 
   <div class="body-row">
     <aside class="sidebar" id="sidebar">
+      <button class="icon-btn mobile-only sidebar-close" id="btnCloseSidebar" title="Fermer">✕</button>
       <div class="sidebar-top">
         <div class="search-box">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1988,6 +1996,9 @@ document.getElementById("btnToggleSidebar").addEventListener("click", ()=>{
 });
 document.getElementById("btnToggleLegend").addEventListener("click", ()=>{
   document.getElementById("legendBox").classList.toggle("open");
+});
+document.getElementById("btnCloseSidebar").addEventListener("click", ()=>{
+  document.getElementById("sidebar").classList.remove("open");
 });
 
 /* --------------------------------- Toast --------------------------------- */
