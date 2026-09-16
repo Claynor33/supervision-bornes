@@ -2275,7 +2275,7 @@ function openImport(){
           <div class="import-mode-label">Sites déjà existants (comparaison sur « ${escapeHtml(tf.label)} », sans tenir compte des accents/majuscules) :</div>
           <label class="import-mode-opt"><input type="radio" name="i_mode" value="add" checked><span>Ajouter uniquement les nouveaux sites — les lignes correspondant à un site déjà présent sont ignorées (pas de doublon créé).</span></label>
           <label class="import-mode-opt"><input type="radio" name="i_mode" value="update"><span>Ajouter les nouveaux <b>et</b> mettre à jour les sites déjà présents avec les informations du fichier.</span></label>
-          <label class="import-mode-opt danger"><input type="radio" name="i_mode" value="replace"><span>Tout remplacer — supprime <b>tous</b> les sites actuellement enregistrés, puis importe le fichier comme nouvelle liste complète. Irréversible.</span></label>
+          <label class="import-mode-opt danger"><input type="radio" name="i_mode" value="replace"><span>Tout remplacer — le fichier devient la liste de référence : les sites qu'il contient sont mis à jour (liens POP/départs conservés), et ceux qui n'y figurent <b>plus</b> sont supprimés. Irréversible pour ces suppressions.</span></label>
         </div>
         <div id="i_result"></div>
       </div>
@@ -2337,40 +2337,40 @@ function openImport(){
       if(rows.length===0){ resEl.className="import-result err"; resEl.textContent="Fichier vide ou illisible."; return; }
 
       if(mode==="replace"){
-        if(!confirm(`Supprimer définitivement les ${DB.sites.length} site(s) actuellement enregistrés et les remplacer par le contenu du fichier ? Cette action est irréversible.`)) return;
+        if(!confirm(`Les sites qui ne figurent pas dans ce fichier seront supprimés. Les sites déjà présents dans le fichier seront mis à jour (ils conservent leur position sur la carte si elle n'est pas fournie, ainsi que leurs liens POP réseau / départs électriques). Continuer ?`)) return;
       }
 
       runBtn.disabled = true; runBtn.textContent = "Import en cours...";
 
-      // Sites existants à conserver comme base de comparaison (vide en mode
-      // "Tout remplacer", puisqu'ils vont être supprimés).
-      const baseSites = mode==="replace" ? [] : DB.sites;
-      const byTitle = new Map(baseSites.map(s=> [normalizeHeaderKey(getField(s, tf.id)), s]));
+      // Base de comparaison : toujours les sites déjà enregistrés, y compris
+      // en mode "Tout remplacer". Une ligne qui correspond à un site existant
+      // (même nom) MET À JOUR ce site en conservant son id, plutôt que de le
+      // supprimer et d'en recréer un nouveau — c'est ce qui permet de garder
+      // ses liens POP réseau / départs électriques (site.pop_ids / depart_ids),
+      // qui ne sont pas dans le fichier CSV et seraient sinon perdus.
+      const byTitle = new Map(DB.sites.map(s=> [normalizeHeaderKey(getField(s, tf.id)), s]));
+      const matchedIds = new Set();
 
       let created=0, updated=0, skippedDup=0, skippedEmpty=0;
-      const toCreate = [];
-      const toUpdate = [];
+      const toWrite = [];
       rows.forEach(r=>{
         const titleVal = (r[tf.id]||"").trim();
         if(!titleVal){ skippedEmpty++; return; }
         const key = normalizeHeaderKey(titleVal);
         const existing = byTitle.get(key);
         if(existing){
-          if(mode==="update"){
-            const updatedSite = {
-              ...existing,
-              lat: r.lat ? parseFloat(r.lat) : existing.lat,
-              lng: r.lng ? parseFloat(r.lng) : existing.lng,
-              fields: buildFieldsFromRow(r, existing.fields),
-              maintenance: buildMaintenanceFromRow(r, existing.maintenance),
-              updated_at: TODAY.toISOString().slice(0,10)
-            };
-            toUpdate.push(updatedSite);
-            byTitle.set(key, updatedSite);
-            updated++;
-          } else {
-            skippedDup++;
-          }
+          matchedIds.add(existing.id);
+          if(mode==="add"){ skippedDup++; return; }
+          const updatedSite = {
+            ...existing,
+            lat: r.lat ? parseFloat(r.lat) : existing.lat,
+            lng: r.lng ? parseFloat(r.lng) : existing.lng,
+            fields: buildFieldsFromRow(r, existing.fields),
+            maintenance: buildMaintenanceFromRow(r, existing.maintenance),
+            updated_at: TODAY.toISOString().slice(0,10)
+          };
+          toWrite.push(updatedSite);
+          updated++;
           return;
         }
         const site = {
@@ -2381,21 +2381,20 @@ function openImport(){
           maintenance: buildMaintenanceFromRow(r, null),
           created_at: TODAY.toISOString().slice(0,10)
         };
-        toCreate.push(site);
-        byTitle.set(key, site);
+        toWrite.push(site);
         created++;
       });
 
-      if(mode==="replace"){
-        for(let i=0;i<DB.sites.length;i+=450){
-          const chunk = DB.sites.slice(i, i+450);
-          const batch = writeBatch(dbFs);
-          chunk.forEach(s=> batch.delete(doc(sitesCol, s.id)));
-          await batch.commit();
-        }
-      }
+      // "Tout remplacer" : seuls les sites absents du fichier sont supprimés
+      // (ceux retrouvés par leur nom sont mis à jour ci-dessus, pas recréés).
+      const toDelete = mode==="replace" ? DB.sites.filter(s=> !matchedIds.has(s.id)) : [];
 
-      const toWrite = toCreate.concat(toUpdate);
+      for(let i=0;i<toDelete.length;i+=450){
+        const chunk = toDelete.slice(i, i+450);
+        const batch = writeBatch(dbFs);
+        chunk.forEach(s=> batch.delete(doc(sitesCol, s.id)));
+        await batch.commit();
+      }
       for(let i=0;i<toWrite.length;i+=450){
         const chunk = toWrite.slice(i, i+450);
         const batch = writeBatch(dbFs);
@@ -2403,21 +2402,20 @@ function openImport(){
         await batch.commit();
       }
 
-      if(mode==="replace"){
-        DB.sites = toCreate;
-      } else {
-        toCreate.forEach(s=> DB.sites.push(s));
-        toUpdate.forEach(s=>{
-          const idx = DB.sites.findIndex(x=>x.id===s.id);
-          if(idx>=0) DB.sites[idx] = s;
-        });
+      if(toDelete.length){
+        const deletedIds = new Set(toDelete.map(s=>s.id));
+        DB.sites = DB.sites.filter(s=> !deletedIds.has(s.id));
       }
+      toWrite.forEach(s=>{
+        const idx = DB.sites.findIndex(x=>x.id===s.id);
+        if(idx>=0) DB.sites[idx] = s; else DB.sites.push(s);
+      });
       renderAll();
       resEl.className="import-result ok";
       const parts = [];
       if(created) parts.push(`${created} site(s) créé(s)`);
       if(updated) parts.push(`${updated} site(s) mis à jour`);
-      if(mode==="replace" && !created && !updated) parts.push("tous les sites ont été supprimés");
+      if(toDelete.length) parts.push(`${toDelete.length} site(s) supprimé(s) (absents du fichier)`);
       if(skippedDup) parts.push(`${skippedDup} ligne(s) ignorée(s) (site déjà existant)`);
       if(skippedEmpty) parts.push(`${skippedEmpty} ligne(s) ignorée(s) (« ${tf.label} » manquant)`);
       resEl.textContent = parts.length ? parts.join(", ")+"." : "Rien à importer.";
