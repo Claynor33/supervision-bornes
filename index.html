@@ -242,6 +242,13 @@
   .link-check{ display:flex; align-items:center; gap:8px; padding:5px 2px; font-size:13px; cursor:pointer; }
   .link-check input{ width:auto; flex:none; }
   .link-swatch{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-left:4px; vertical-align:middle; }
+  .relay-picker{ margin-top:8px; }
+  .relay-picker-row{ display:flex; gap:6px; margin-top:4px; }
+  .relay-picker-row select{ flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; padding:7px 8px; background:var(--panel); color:var(--text); }
+  .relay-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .relay-chip{ display:inline-flex; align-items:center; gap:6px; background:var(--gray-bg); border:1px solid var(--border); border-radius:999px; padding:4px 6px 4px 10px; font-size:12px; font-weight:600; color:var(--text); }
+  .relay-chip-del{ border:none; background:none; color:var(--text-faint); font-size:13px; line-height:1; cursor:pointer; padding:2px 3px; }
+  .relay-chip-del:hover{ color:var(--red); }
   .small-btn{
     border:1px solid var(--border); background:var(--panel); border-radius:8px; padding:8px 11px; font-weight:600; font-size:12.5px; color:var(--text);
     white-space:nowrap;
@@ -999,14 +1006,74 @@ function pointMarker(kind, point){
   }
   return m;
 }
+// Un site peut désormais reprendre son raccordement (réseau ou électrique)
+// sur un autre site déjà existant plutôt que directement sur un POP/départ
+// — ce site intermédiaire sert alors de relais/pont, et la chaîne peut
+// compter plusieurs sauts avant d'atteindre le vrai POP/départ. Les valeurs
+// de site.pop_ids / site.depart_ids peuvent donc contenir soit un id de
+// POP/départ (destination finale), soit l'id d'un autre site (relais) —
+// on distingue les deux en cherchant l'id dans la bonne collection.
+// walkLinkChain() explore cette chaîne en profondeur à partir d'un site et
+// appelle onEdge(depuis, vers, cibleInfo) pour chaque tronçon valide, en se
+// protégeant des boucles (deux sites qui se pointent l'un vers l'autre).
+function walkLinkChain(kind, startSite, onEdge){
+  const field = kind==="pop" ? "pop_ids" : "depart_ids";
+  const cfg = POINT_TYPES[kind];
+  const visited = new Set([startSite.id]);
+  (function dfs(current){
+    (current[field]||[]).forEach(targetId=>{
+      const point = cfg.list().find(p=>p.id===targetId);
+      if(point && typeof point.lat==="number"){
+        onEdge({lat:current.lat,lng:current.lng}, {lat:point.lat,lng:point.lng}, {type:"point", id:point.id});
+        return;
+      }
+      if(point) return; // POP/départ référencé mais sans position -> rien à tracer
+      const relay = DB.sites.find(s=>s.id===targetId);
+      if(relay && typeof relay.lat==="number" && !visited.has(relay.id)){
+        onEdge({lat:current.lat,lng:current.lng}, {lat:relay.lat,lng:relay.lng}, {type:"site", id:relay.id});
+        visited.add(relay.id);
+        dfs(relay);
+      }
+      // sinon : référence orpheline (site/POP supprimé) ou boucle détectée
+      // -> cette branche s'arrête simplement là, sans erreur.
+    });
+  })(startSite);
+}
+// Variante qui ne retient que les chemins complets, du site de départ
+// jusqu'à un vrai POP/départ (les impasses sur un relais pas encore raccordé
+// ne produisent pas de chemin). Utilisée pour retrouver, à partir d'un
+// POP/départ, tous les sites qui l'atteignent — directement ou via un ou
+// plusieurs sites-relais.
+function pathsFromSiteToPoints(kind, startSite){
+  if(typeof startSite.lat!=="number") return [];
+  const field = kind==="pop" ? "pop_ids" : "depart_ids";
+  const cfg = POINT_TYPES[kind];
+  const results = [];
+  const visited = new Set([startSite.id]);
+  (function dfs(current, chainNodes){
+    (current[field]||[]).forEach(targetId=>{
+      const point = cfg.list().find(p=>p.id===targetId);
+      if(point && typeof point.lat==="number"){
+        results.push({ pointId: point.id, nodes: chainNodes.concat([{type:"point", lat:point.lat, lng:point.lng, id:point.id}]) });
+        return;
+      }
+      const relay = DB.sites.find(s=>s.id===targetId);
+      if(relay && typeof relay.lat==="number" && !visited.has(relay.id)){
+        visited.add(relay.id);
+        dfs(relay, chainNodes.concat([{type:"site", lat:relay.lat, lng:relay.lng, id:relay.id, nom:siteTitle(relay)}]));
+      }
+    });
+  })(startSite, [{type:"site", lat:startSite.lat, lng:startSite.lng, id:startSite.id, nom:siteTitle(startSite)}]);
+  return results;
+}
 // Un POP/départ électrique reste affiché tant qu'il alimente au moins un
 // site du type actuellement filtré (bouton "Recharge"/"Contrôle accès"/
-// "Barrière"). Sans filtre de type actif, tous les POP/départs s'affichent,
-// y compris ceux pas encore reliés à un site.
+// "Barrière"), directement ou via un site-relais. Sans filtre de type actif,
+// tous les POP/départs s'affichent, y compris ceux pas encore reliés.
 function pointMatchesEquipFilter(kind, point){
   if(!activeEquipement) return true;
-  const field = kind==="pop" ? "pop_ids" : "depart_ids";
-  return DB.sites.some(s=> Array.isArray(s[field]) && s[field].includes(point.id) && equipmentFamily(s)===activeEquipement);
+  return DB.sites.some(s=> equipmentFamily(s)===activeEquipement
+    && pathsFromSiteToPoints(kind, s).some(p=>p.pointId===point.id));
 }
 function rebuildPoints(){
   popLayerGroup.clearLayers();
@@ -1021,30 +1088,45 @@ function clearLinkLines(){ linkLinesGroup.clearLayers(); }
 function drawLinksForSite(site){
   clearLinkLines();
   if(typeof site.lat!=="number" || typeof site.lng!=="number") return;
-  (site.pop_ids||[]).forEach(pid=>{
-    const p = DB.pops.find(x=>x.id===pid);
-    if(p && typeof p.lat==="number") linkLinesGroup.addLayer(L.polyline([[site.lat,site.lng],[p.lat,p.lng]], {color:LINK_COLORS.pop, weight:3, opacity:.85, dashArray:"7,5"}));
-  });
-  (site.depart_ids||[]).forEach(did=>{
-    const d = DB.departs.find(x=>x.id===did);
-    if(d && typeof d.lat==="number") linkLinesGroup.addLayer(L.polyline([[site.lat,site.lng],[d.lat,d.lng]], {color:LINK_COLORS.depart, weight:3, opacity:.85, dashArray:"2,6"}));
+  ["pop","depart"].forEach(kind=>{
+    walkLinkChain(kind, site, (from,to)=>{
+      linkLinesGroup.addLayer(L.polyline([[from.lat,from.lng],[to.lat,to.lng]], {color:LINK_COLORS[kind], weight:3, opacity:.85, dashArray: kind==="pop"?"7,5":"2,6"}));
+    });
   });
 }
 function drawLinksForPoint(kind, point){
   clearLinkLines();
   if(typeof point.lat!=="number" || typeof point.lng!=="number") return;
-  const field = kind==="pop" ? "pop_ids" : "depart_ids";
-  DB.sites.filter(s=> Array.isArray(s[field]) && s[field].includes(point.id) && typeof s.lat==="number"
-    && (!activeEquipement || equipmentFamily(s)===activeEquipement)
-  ).forEach(s=>{
-    linkLinesGroup.addLayer(L.polyline([[s.lat,s.lng],[point.lat,point.lng]], {color:LINK_COLORS[kind], weight:3, opacity:.85, dashArray: kind==="pop"?"7,5":"2,6"}));
+  DB.sites.forEach(s=>{
+    if(typeof s.lat!=="number") return;
+    if(activeEquipement && equipmentFamily(s)!==activeEquipement) return;
+    pathsFromSiteToPoints(kind, s).filter(p=>p.pointId===point.id).forEach(p=>{
+      for(let i=0;i<p.nodes.length-1;i++){
+        const a=p.nodes[i], b=p.nodes[i+1];
+        linkLinesGroup.addLayer(L.polyline([[a.lat,a.lng],[b.lat,b.lng]], {color:LINK_COLORS[kind], weight:3, opacity:.85, dashArray: kind==="pop"?"7,5":"2,6"}));
+      }
+    });
   });
 }
 function linkedSitesListHtml(kind, pointId){
-  const field = kind==="pop" ? "pop_ids" : "depart_ids";
-  const linked = DB.sites.filter(s=> Array.isArray(s[field]) && s[field].includes(pointId));
-  if(!linked.length) return "Aucun site relié pour l'instant (à cocher depuis la fiche du site).";
-  return linked.map(s=> escapeHtml(siteTitle(s))).join(" · ");
+  const items = [];
+  DB.sites.forEach(s=>{
+    pathsFromSiteToPoints(kind, s).filter(p=>p.pointId===pointId).forEach(p=>{
+      const relayNames = p.nodes.slice(1, -1).map(n=>n.nom);
+      items.push(relayNames.length
+        ? `${escapeHtml(siteTitle(s))} <span style="color:var(--text-faint);">(via ${relayNames.map(escapeHtml).join(" → ")})</span>`
+        : escapeHtml(siteTitle(s)));
+    });
+  });
+  if(!items.length) return "Aucun site relié pour l'instant (à cocher ou relier depuis la fiche du site).";
+  return items.join(" · ");
+}
+// Options <option> listant tous les autres sites (pour choisir un relais
+// réseau/électrique depuis la fiche d'un site), triées par nom.
+function otherSitesOptionsHtml(excludeId){
+  return DB.sites.filter(s=> s.id!==excludeId && typeof s.lat==="number")
+    .slice().sort((a,b)=> siteTitle(a).localeCompare(siteTitle(b), "fr"))
+    .map(s=>`<option value="${escapeAttr(s.id)}">${escapeHtml(siteTitle(s))}</option>`).join("");
 }
 
 // Clic sur la carte : en mode placement -> pose un repère ; sinon, clic sur
@@ -1376,6 +1458,14 @@ function openFiche(id){
     return `<div class="field">
       <label>${kind==="pop"?"POP réseau reliés":"Départs électriques reliés"} <span class="link-swatch" style="background:${cfg.color}"></span></label>
       <div class="link-list">${rows}</div>
+      ${!readOnly ? `<div class="relay-picker">
+        <div class="hint">Ou reprend son raccordement sur un site déjà existant (ce site sert alors de relais jusqu'à ${kind==="pop"?"son propre POP":"son propre départ électrique"}) :</div>
+        <div class="relay-picker-row">
+          <select id="relaySelect_${kind}"><option value="">— Choisir un site —</option>${otherSitesOptionsHtml(site.id)}</select>
+          <button type="button" class="small-btn" id="relayAdd_${kind}">+ Ajouter</button>
+        </div>
+      </div>` : ""}
+      <div class="relay-chips" id="relayChips_${kind}"></div>
     </div>`;
   };
 
@@ -1436,6 +1526,49 @@ function openFiche(id){
   applyFieldScopeVisibility();
   const typeSelEl = document.getElementById("ff_type_equipement");
   if(typeSelEl) typeSelEl.addEventListener("change", applyFieldScopeVisibility);
+
+  // Raccordement repris sur un autre site (relais) : les ids de
+  // site.pop_ids / site.depart_ids qui ne correspondent pas à un POP/départ
+  // réel mais à un autre site sont gérés séparément des cases à cocher, sous
+  // forme de « chips » ajoutables/supprimables (liste de ~400 sites trop
+  // grande pour des cases à cocher). Combiné aux cases cochées à l'enregistrement.
+  const relayState = {
+    pop: (site.pop_ids||[]).filter(id=> !DB.pops.some(p=>p.id===id) && DB.sites.some(s=>s.id===id)),
+    depart: (site.depart_ids||[]).filter(id=> !DB.departs.some(d=>d.id===id) && DB.sites.some(s=>s.id===id)),
+  };
+  function renderRelayChips(kind){
+    const box = document.getElementById("relayChips_"+kind);
+    if(!box) return;
+    box.innerHTML = relayState[kind].map(id=>{
+      const s = DB.sites.find(x=>x.id===id);
+      const label = s ? siteTitle(s) : "(site introuvable)";
+      return `<span class="relay-chip">${escapeHtml(label)}${!readOnly?`<button type="button" class="relay-chip-del" data-kind="${kind}" data-id="${escapeAttr(id)}">✕</button>`:""}</span>`;
+    }).join("");
+    if(!readOnly){
+      box.querySelectorAll(".relay-chip-del").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const k = btn.dataset.kind, rid = btn.dataset.id;
+          relayState[k] = relayState[k].filter(x=>x!==rid);
+          renderRelayChips(k);
+        });
+      });
+    }
+  }
+  renderRelayChips("pop");
+  renderRelayChips("depart");
+  if(!readOnly){
+    ["pop","depart"].forEach(kind=>{
+      const addBtn = document.getElementById("relayAdd_"+kind);
+      if(addBtn) addBtn.addEventListener("click", ()=>{
+        const sel = document.getElementById("relaySelect_"+kind);
+        const val = sel.value;
+        if(!val) return;
+        if(!relayState[kind].includes(val)) relayState[kind].push(val);
+        sel.value = "";
+        renderRelayChips(kind);
+      });
+    });
+  }
 
   if(isNew && site.lat && site.lng){
     if(draftMarker) map.removeLayer(draftMarker);
@@ -1534,8 +1667,8 @@ function openFiche(id){
       const maintenance = { ...(site.maintenance||{}) };
       const maintInputVal = document.getElementById("ff_maintenance").value;
       if(maintInputVal) maintenance[camp.id] = maintInputVal; else delete maintenance[camp.id];
-      const pop_ids = Array.from(document.querySelectorAll(".pop-check:checked")).map(el=>el.value);
-      const depart_ids = Array.from(document.querySelectorAll(".depart-check:checked")).map(el=>el.value);
+      const pop_ids = Array.from(document.querySelectorAll(".pop-check:checked")).map(el=>el.value).concat(relayState.pop);
+      const depart_ids = Array.from(document.querySelectorAll(".depart-check:checked")).map(el=>el.value).concat(relayState.depart);
 
       const updated = { ...site, lat: ll.lat, lng: ll.lng, fields, maintenance, pop_ids, depart_ids, updated_at: TODAY.toISOString().slice(0,10) };
       const saveBtn = document.getElementById("f_save");
