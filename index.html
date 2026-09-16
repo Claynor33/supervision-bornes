@@ -2208,7 +2208,8 @@ document.getElementById("btnImport").addEventListener("click", openImport);
 function openImport(){
   if(role!=="admin"){ toast("Passez en mode Admin pour importer des sites."); return; }
   const tf = titleFieldDef();
-  const csvCols = ["lat","lng"].concat(DB.schema.map(f=>f.id)).concat(DB.campaigns.map(c=>"maintenance_"+c.id));
+  const csvCols = csvColumnsList();
+  const friendlyCols = csvCols.map(csvFriendlyHeader);
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
@@ -2216,14 +2217,18 @@ function openImport(){
       <div class="modal-head"><h3>Importer des sites (CSV)</h3><button class="close-x" id="i_close">✕</button></div>
       <div class="modal-body">
         <div class="file-drop">
+          Pas encore de fichier ? Téléchargez un modèle vide à remplir dans Excel, avec des colonnes toutes prêtes.
+          <button class="small-btn" id="i_template" type="button" style="margin-top:8px;">⬇️ Modèle vide (.csv)</button>
+        </div>
+        <div class="file-drop">
           Choisissez un fichier CSV, ou collez son contenu ci-dessous.
           <input type="file" id="i_file" accept=".csv,text/csv">
         </div>
-        <textarea class="csv-area" id="i_text" placeholder="${escapeAttr(csvCols.join(","))}"></textarea>
+        <textarea class="csv-area" id="i_text" placeholder="${escapeAttr(friendlyCols.join(";"))}"></textarea>
         <div class="csv-help">
-          Colonnes reconnues (basées sur les champs et campagnes actuels — ⚙️ Paramètres) : <b>${csvCols.map(escapeHtml).join(", ")}</b>.<br>
-          La colonne <b>${escapeHtml(tf.id)}</b> (${escapeHtml(tf.label)}) est obligatoire pour qu'une ligne soit importée. Les colonnes <b>maintenance_&lt;id campagne&gt;</b> au format AAAA-MM-JJ.<br>
-          Si lat/lng sont vides, vous pourrez positionner chaque site ensuite depuis sa fiche (bouton « Localiser »).
+          Colonnes reconnues (basées sur les champs et campagnes actuels — ⚙️ Paramètres) : <b>${friendlyCols.map(escapeHtml).join(", ")}</b>. Le fichier peut utiliser un point-virgule ou une virgule comme séparateur, c'est détecté automatiquement.<br>
+          La colonne <b>${escapeHtml(tf.label)}</b> est obligatoire pour qu'une ligne soit importée. Les colonnes <b>Dernière maintenance - &lt;campagne&gt;</b> au format AAAA-MM-JJ.<br>
+          Si Latitude/Longitude sont vides, vous pourrez positionner chaque site ensuite depuis sa fiche (bouton « Localiser » ou en cliquant sur la carte).
         </div>
         <div id="i_result"></div>
       </div>
@@ -2237,6 +2242,9 @@ function openImport(){
   overlay.addEventListener("click", (e)=>{ if(e.target===overlay) close(); });
   document.getElementById("i_close").addEventListener("click", close);
   document.getElementById("i_cancel").addEventListener("click", close);
+  document.getElementById("i_template").addEventListener("click", ()=>{
+    downloadFile("modele_sites_bornes.csv", buildCsvText(csvCols, []), "text/csv;charset=utf-8");
+  });
   document.getElementById("i_file").addEventListener("change", (e)=>{
     const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();
@@ -2293,20 +2301,71 @@ function openImport(){
     }
   });
 }
+// Excel en français attend un point-virgule comme séparateur de colonnes
+// (la virgule sert de séparateur décimal) — sans ça, tout le fichier
+// s'ouvrait dans une seule colonne. On détecte quand même automatiquement
+// le séparateur utilisé, pour rester compatible avec un fichier recollé
+// depuis un tableur en anglais (virgules) ou un ancien export.
+function detectCsvDelimiter(headerLine){
+  const semi = (headerLine.match(/;/g)||[]).length;
+  const comma = (headerLine.match(/,/g)||[]).length;
+  return semi >= comma ? ";" : ",";
+}
+function normalizeHeaderKey(s){
+  return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim().replace(/\s+/g," ");
+}
+// Reconnaît un en-tête de colonne qu'il soit écrit avec le nom technique
+// (ex. "type_equipement", "maintenance_s2_2026" — anciens exports) ou avec
+// le libellé lisible utilisé dans l'export actuel (ex. "Type d'équipement",
+// "Dernière maintenance - S2 2026"), accents et casse ignorés.
+function resolveCsvHeader(h){
+  const norm = normalizeHeaderKey(h);
+  if(norm==="lat" || norm==="latitude") return "lat";
+  if(norm==="lng" || norm==="lon" || norm==="long" || norm==="longitude") return "lng";
+  const fieldMatch = DB.schema.find(f=> normalizeHeaderKey(f.id)===norm || normalizeHeaderKey(f.label)===norm);
+  if(fieldMatch) return fieldMatch.id;
+  for(const c of DB.campaigns){
+    const candidates = [
+      normalizeHeaderKey("maintenance_"+c.id),
+      normalizeHeaderKey("derniere maintenance - "+c.nom),
+      normalizeHeaderKey(c.nom)
+    ];
+    if(candidates.includes(norm)) return "maintenance_"+c.id;
+  }
+  return null;
+}
+function csvFriendlyHeader(col){
+  if(col==="lat") return "Latitude";
+  if(col==="lng") return "Longitude";
+  if(col.indexOf("maintenance_")===0){
+    const cid = col.slice("maintenance_".length);
+    const camp = DB.campaigns.find(c=>c.id===cid);
+    return "Dernière maintenance - " + (camp ? camp.nom : cid);
+  }
+  const f = DB.schema.find(f=>f.id===col);
+  return f ? f.label : col;
+}
 function parseCsv(text){
-  const lines = text.replace(/\r\n/g,"\n").split("\n").filter(l=>l.trim().length>0);
+  // Retire l'indicateur UTF-8 (BOM) ajouté par notre export (ou par Excel)
+  // en tête de fichier, sinon il se colle au nom de la première colonne.
+  const clean = text.replace(/^﻿/, "").replace(/\r\n/g,"\n").replace(/\r/g,"\n");
+  const lines = clean.split("\n").filter(l=>l.trim().length>0);
   if(lines.length<2) return [];
-  const headers = splitCsvLine(lines[0]).map(h=>h.trim());
+  const delim = detectCsvDelimiter(lines[0]);
+  const rawHeaders = splitCsvLine(lines[0], delim);
+  // Une colonne non reconnue garde son texte d'origine comme clé : elle est
+  // simplement ignorée plus loin (aucun champ ne porte ce nom-là).
+  const headers = rawHeaders.map(h=> resolveCsvHeader(h) || h);
   const rows = [];
   for(let i=1;i<lines.length;i++){
-    const cells = splitCsvLine(lines[i]);
+    const cells = splitCsvLine(lines[i], delim);
     const obj = {};
     headers.forEach((h,idx)=> obj[h] = cells[idx] !== undefined ? cells[idx] : "");
     rows.push(obj);
   }
   return rows;
 }
-function splitCsvLine(line){
+function splitCsvLine(line, delim){
   const out = []; let cur=""; let inQuotes=false;
   for(let i=0;i<line.length;i++){
     const ch = line[i];
@@ -2315,7 +2374,7 @@ function splitCsvLine(line){
       else cur+=ch;
     } else {
       if(ch === '"') inQuotes=true;
-      else if(ch === ','){ out.push(cur); cur=""; }
+      else if(ch === delim){ out.push(cur); cur=""; }
       else cur+=ch;
     }
   }
@@ -2324,16 +2383,28 @@ function splitCsvLine(line){
 }
 
 /* -------------------------------- Export -------------------------------- */
-document.getElementById("btnExportCsv").addEventListener("click", ()=>{
-  const cols = ["lat","lng"].concat(DB.schema.map(f=>f.id)).concat(DB.campaigns.map(c=>"maintenance_"+c.id));
+function csvColumnsList(){
+  return ["lat","lng"].concat(DB.schema.map(f=>f.id)).concat(DB.campaigns.map(c=>"maintenance_"+c.id));
+}
+// Construit un CSV lisible dans Excel (français comme anglais) : séparateur
+// point-virgule, retours à la ligne Windows, et un indicateur UTF-8 (BOM)
+// en tête de fichier pour que les accents s'affichent correctement au lieu
+// d'être remplacés par des caractères bizarres (Ã©, Ã¨...).
+function buildCsvText(cols, rows){
   const esc = (v)=> `"${String(v??"").replace(/"/g,'""')}"`;
-  const lines = [cols.join(",")].concat(DB.sites.map(s=> cols.map(c=>{
-    if(c==="lat") return esc(s.lat);
-    if(c==="lng") return esc(s.lng);
-    if(c.indexOf("maintenance_")===0){ const cid=c.slice("maintenance_".length); return esc(s.maintenance?s.maintenance[cid]:""); }
-    return esc(getField(s,c));
-  }).join(",")));
-  downloadFile("sites_bornes_export.csv", lines.join("\n"), "text/csv;charset=utf-8");
+  const headerLine = cols.map(c=> esc(csvFriendlyHeader(c))).join(";");
+  const lines = [headerLine].concat(rows.map(r=> r.map(esc).join(";")));
+  return "﻿" + lines.join("\r\n");
+}
+document.getElementById("btnExportCsv").addEventListener("click", ()=>{
+  const cols = csvColumnsList();
+  const rows = DB.sites.map(s=> cols.map(c=>{
+    if(c==="lat") return s.lat;
+    if(c==="lng") return s.lng;
+    if(c.indexOf("maintenance_")===0){ const cid=c.slice("maintenance_".length); return s.maintenance?s.maintenance[cid]:""; }
+    return getField(s,c);
+  }));
+  downloadFile("sites_bornes_export.csv", buildCsvText(cols, rows), "text/csv;charset=utf-8");
 });
 document.getElementById("btnExportJson").addEventListener("click", ()=>{
   downloadFile("supervision_bornes_sauvegarde.json", JSON.stringify(DB, null, 2), "application/json");
