@@ -286,6 +286,11 @@
   .fmrow-bottom label{ display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-dim); white-space:nowrap; }
   .fmrow-default{ flex:1; min-width:140px; border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12.5px; background:var(--panel); }
   .fmrow-sys-note{ font-size:11px; color:var(--text-faint); margin-top:7px; line-height:1.4; }
+  .fmrow-scope{ margin-top:9px; padding-top:9px; border-top:1px dashed var(--border); }
+  .fmrow-scope-label{ font-size:12px; color:var(--text-dim); font-weight:600; margin-bottom:5px; }
+  .fmrow-scope-opts{ display:flex; flex-wrap:wrap; gap:10px; }
+  .scope-chk{ display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-dim); white-space:nowrap; }
+  .fmrow-scope-hint{ font-size:11px; color:var(--text-faint); margin-top:6px; line-height:1.4; }
   .fm-add-btn{ width:100%; border:1.5px dashed var(--border); background:transparent; border-radius:10px; padding:10px; font-weight:600; color:var(--text-dim); }
   .fm-add-btn:hover{ background:var(--bg); color:var(--text); }
   .cmrow-actions{ display:flex; gap:8px; margin-top:6px; }
@@ -714,12 +719,15 @@ function siteFrequency(site){
 // dans la valeur du champ (comme pour la fréquence) : insensible à la casse
 // et à la formulation exacte, donc le libellé peut être renommé sans casser
 // l'icône, tant que le mot-clé principal reste présent quelque part.
-function equipmentFamily(site){
-  const v = String(getField(site,"type_equipement")||"").toLowerCase();
+function familyFromEquipValue(raw){
+  const v = String(raw||"").toLowerCase();
   if(v.indexOf("recharge") !== -1) return "recharge";
   if(v.indexOf("barri") !== -1) return "barriere"; // barrière / barriere
   if(v.indexOf("contr") !== -1 || v.indexOf("acc") !== -1) return "controle"; // contrôle d'accès
   return "autre";
+}
+function equipmentFamily(site){
+  return familyFromEquipValue(getField(site,"type_equipement"));
 }
 const EQUIPMENT_ICONS = {
   recharge: '<svg viewBox="0 0 24 24" width="12" height="12" fill="#fff"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>',
@@ -1289,14 +1297,16 @@ function openFiche(id){
 
   const bodyFields = DB.schema.filter(f=> f.id !== tf.id).map(f=>{
     const val = getField(site, f.id);
+    const scopeAttr = (f.id!=="type_equipement" && Array.isArray(f.equip_scope) && f.equip_scope.length)
+      ? ` data-equip-scope="${f.equip_scope.join(",")}"` : "";
     if(f.id === "adresse"){
-      return `<div class="field">
+      return `<div class="field"${scopeAttr}>
         <label>${escapeHtml(f.label)}${f.required?" *":""}</label>
         <div class="geo-row">${renderFieldInput(f, val)}${!readOnly?`<button class="small-btn" id="f_geocode" type="button">Localiser</button>`:""}${!readOnly && site.lat && site.lng?`<button class="small-btn" id="f_reverseGeo" type="button" title="Déduire l'adresse depuis la position du repère">🔄 Depuis GPS</button>`:""}${!readOnly && !isNew?`<button class="small-btn" id="f_reposition" type="button">📍 Repositionner</button>`:""}</div>
         <div class="hint" id="f_geoHint">${(site.lat&&site.lng)?`Position : ${site.lat.toFixed(5)}, ${site.lng.toFixed(5)} — glissez le repère sur la carte pour ajuster.`:"Aucune position définie — tapez une adresse puis « Localiser », ou cliquez directement sur la carte."}</div>
       </div>`;
     }
-    return `<div class="field"><label>${escapeHtml(f.label)}${f.required?" *":""}</label>${renderFieldInput(f, val)}</div>`;
+    return `<div class="field"${scopeAttr}><label>${escapeHtml(f.label)}${f.required?" *":""}</label>${renderFieldInput(f, val)}</div>`;
   }).join("");
 
   const linkFieldHtml = (kind)=>{
@@ -1352,6 +1362,23 @@ function openFiche(id){
   document.getElementById("f_closeBtn").addEventListener("click", closeFiche);
   const expandBtn = document.getElementById("f_expand");
   if(expandBtn) expandBtn.addEventListener("click", ()=> panel.classList.toggle("expanded"));
+
+  // Champs conditionnels : n'affiche un champ que si son « equip_scope »
+  // (défini dans ⚙️ Paramètres → Champs de la fiche) contient la famille du
+  // type d'équipement actuellement sélectionné (recharge / contrôle / barrière
+  // / autre). Se met à jour en direct dès que le sélecteur change, sans perdre
+  // les autres champs déjà saisis (pas de re-rendu complet du formulaire).
+  const applyFieldScopeVisibility = ()=>{
+    const typeSel = document.getElementById("ff_type_equipement");
+    const fam = familyFromEquipValue(typeSel ? typeSel.value : getField(site,"type_equipement"));
+    panel.querySelectorAll("[data-equip-scope]").forEach(div=>{
+      const scopes = div.dataset.equipScope.split(",");
+      div.style.display = scopes.includes(fam) ? "" : "none";
+    });
+  };
+  applyFieldScopeVisibility();
+  const typeSelEl = document.getElementById("ff_type_equipement");
+  if(typeSelEl) typeSelEl.addEventListener("change", applyFieldScopeVisibility);
 
   if(isNew && site.lat && site.lng){
     if(draftMarker) map.removeLayer(draftMarker);
@@ -1915,9 +1942,16 @@ function fieldRowHtml(f){
       f.id==="ville" ? "utilisé par le sélecteur de ville en haut de la liste et pour filtrer la carte." :
       f.id==="secteur" ? "utilisé par le sélecteur de secteur/tournée (combinable avec le filtre ville) et par l'itinéraire optimisé." :
       f.id==="frequence" ? "utilisé pour calculer le statut rouge/jaune/vert (une option doit contenir le mot « annuel » pour être reconnue comme fréquence annuelle, les autres comptent comme semestrielles)." :
-      f.id==="type_equipement" ? "détermine le petit pictogramme affiché sur le repère de la carte (recharge ⚡, contrôle d'accès 🔒, barrière). Les options doivent contenir « recharge », « contrôle »/« accès » ou « barrière » pour être reconnues ; une valeur non reconnue n'affiche aucun pictogramme." :
+      f.id==="type_equipement" ? "détermine le petit pictogramme affiché sur le repère de la carte (recharge ⚡, contrôle d'accès 🔒, barrière) et permet de n'afficher les autres champs de la fiche que pour le type d'équipement concerné (voir ci-dessous sur chaque champ). Les options doivent contenir « recharge », « contrôle »/« accès » ou « barrière » pour être reconnues ; une valeur non reconnue n'affiche aucun pictogramme." :
       "utilisé par l'application."
     } Il ne peut pas être supprimé, mais peut être renommé, réordonné${f.type==="select"?", et ses options peuvent être modifiées librement":""}.</div>`:""}
+    ${f.id!=="type_equipement" ? `<div class="fmrow-scope">
+      <div class="fmrow-scope-label">Afficher ce champ dans la fiche uniquement pour :</div>
+      <div class="fmrow-scope-opts">${Object.keys(EQUIPMENT_LABELS).map(k=>
+        `<label class="scope-chk"><input type="checkbox" class="fmrow-scope-opt" value="${k}" ${(f.equip_scope||[]).includes(k)?"checked":""}> ${escapeHtml(EQUIPMENT_LABELS[k])}</label>`
+      ).join("")}</div>
+      <div class="fmrow-scope-hint">Aucune case cochée = champ toujours visible, quel que soit le « Type d'équipement » choisi sur la fiche.</div>
+    </div>` : ""}
   </div>`;
 }
 function wireFieldRow(row, container){
@@ -1945,7 +1979,7 @@ function renderFieldManager(container){
     if(label===null || !label.trim()) return;
     const existingIds = Array.from(container.querySelectorAll(".fmrow")).map(r=>r.dataset.fid);
     const id = uniqueFieldId(slugify(label), existingIds);
-    const newField = { id, label:label.trim(), type:"text", system:false, required:false, show_in_list:false, default:"" };
+    const newField = { id, label:label.trim(), type:"text", system:false, required:false, show_in_list:false, default:"", equip_scope:[] };
     const wrap = document.createElement("div");
     wrap.innerHTML = fieldRowHtml(newField);
     const rowEl = wrap.firstElementChild;
@@ -2179,8 +2213,10 @@ function openSettings(){
         const required = row.querySelector(".fmrow-required").checked;
         const show_in_list = row.querySelector(".fmrow-showlist").checked;
         const def = row.querySelector(".fmrow-default").value;
+        const scopeEls = row.querySelectorAll(".fmrow-scope-opt:checked");
+        const equip_scope = scopeEls.length ? Array.from(scopeEls).map(el=>el.value) : [];
         const existing = DB.schema.find(x=>x.id===id);
-        return { id, label, type, options: type==="select"?options:[], system: existing?!!existing.system:false, required, show_in_list, default: def };
+        return { id, label, type, options: type==="select"?options:[], system: existing?!!existing.system:false, required, show_in_list, default: def, equip_scope };
       });
       if(newSchema.length===0){ toast("Il doit rester au moins un champ."); return; }
 
