@@ -104,6 +104,25 @@
     background:var(--panel); color:var(--text); font-weight:600;
   }
 
+  /* Filtres repliés par défaut : la liste de sites doit occuper l'essentiel
+     de la colonne de gauche, les filtres (ville, secteur, statut, type
+     d'équipement, tri) ne s'affichent qu'en dépliant ce panneau. */
+  .filters-toggle{
+    display:flex; align-items:center; gap:7px; width:100%; margin-bottom:10px;
+    border:1px solid var(--border); border-radius:8px; padding:9px 10px;
+    background:var(--panel); color:var(--text); font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  .filters-toggle:hover{ background:var(--gray-bg); }
+  .filters-toggle svg{ flex-shrink:0; color:var(--text-dim); }
+  .filters-badge{
+    background:var(--accent); color:#fff; font-size:10.5px; font-weight:700;
+    border-radius:999px; padding:1px 7px; line-height:1.5;
+  }
+  .filters-chevron{ margin-left:auto; transition:transform .15s ease; }
+  .filters-toggle.open .filters-chevron{ transform:rotate(180deg); }
+  .filters-panel{ display:none; }
+  .filters-panel.open{ display:block; }
+
   .filter-chips{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
   .chip{
     border:1px solid var(--border); background:var(--panel); border-radius:999px; padding:5px 10px;
@@ -414,15 +433,23 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input id="searchInput" placeholder="Rechercher dans tous les champs...">
         </div>
-        <div id="cityFilterWrap" class="city-select-wrap"></div>
-        <div id="secteurFilterWrap" class="city-select-wrap"></div>
-        <div class="role-toggle" id="sortToggle" style="margin-bottom:10px; width:100%; justify-content:center;">
-          <span style="padding:0 8px; color:var(--text-dim); font-size:12px; font-weight:600;">Trier :</span>
-          <button type="button" data-sort="urgence" class="active">Urgence</button>
-          <button type="button" data-sort="nom">Nom</button>
+        <button type="button" class="filters-toggle" id="filtersToggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+          <span>Filtres &amp; tri</span>
+          <span class="filters-badge" id="filtersBadge" style="display:none;"></span>
+          <svg class="filters-chevron" id="filtersChevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="filters-panel" id="filtersPanel">
+          <div id="cityFilterWrap" class="city-select-wrap"></div>
+          <div id="secteurFilterWrap" class="city-select-wrap"></div>
+          <div class="role-toggle" id="sortToggle" style="margin-bottom:10px; width:100%; justify-content:center;">
+            <span style="padding:0 8px; color:var(--text-dim); font-size:12px; font-weight:600;">Trier :</span>
+            <button type="button" data-sort="urgence" class="active">Urgence</button>
+            <button type="button" data-sort="nom">Nom</button>
+          </div>
+          <div class="filter-chips" id="filterChips"></div>
+          <div class="filter-chips" id="equipementChips"></div>
         </div>
-        <div class="filter-chips" id="filterChips"></div>
-        <div class="filter-chips" id="equipementChips"></div>
         <button class="add-site-btn" id="btnAddSite">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Ajouter un site
@@ -838,6 +865,7 @@ let activeCity = ""; // "" = toutes les villes
 let activeSecteur = ""; // "" = tous les secteurs / tournées
 let sortMode = "urgence"; // "urgence" | "nom"
 let searchQuery = "";
+let filtersExpanded = false; // panneau "Filtres & tri" replié par défaut pour laisser la place à la liste des sites
 let selectedId = null;
 let selectedPointKind = null; // "pop" | "depart" | null — fiche POP/départ actuellement ouverte
 let selectedPointId = null;
@@ -1249,9 +1277,32 @@ function renderAll(){
   renderSecteurFilter();
   renderFilterChips();
   renderEquipementFilter();
+  renderFiltersBadge();
   renderList();
   rebuildMap(filteredSites());
   rebuildPoints();
+}
+
+// Petit badge sur le bouton "Filtres & tri" indiquant combien de filtres
+// sont actifs, même quand le panneau est replié (on ne perd pas de vue
+// qu'un filtre limite la liste affichée).
+function renderFiltersBadge(){
+  const badge = document.getElementById("filtersBadge");
+  if(!badge) return;
+  let count = 0;
+  if(activeCity) count++;
+  if(activeSecteur) count++;
+  if(activeFilter !== "tous") count++;
+  if(activeEquipement) count++;
+  if(count){ badge.textContent = String(count); badge.style.display = ""; }
+  else { badge.style.display = "none"; }
+}
+function setFiltersExpanded(expanded){
+  filtersExpanded = expanded;
+  const panel = document.getElementById("filtersPanel");
+  const toggle = document.getElementById("filtersToggle");
+  if(panel) panel.classList.toggle("open", filtersExpanded);
+  if(toggle) toggle.classList.toggle("open", filtersExpanded);
 }
 
 /* ------------------------------ Fiche site ------------------------------ */
@@ -2613,6 +2664,9 @@ onAuthStateChanged(auth, async (user)=>{
 
 /* ------------------------------ Recherche ------------------------------- */
 document.getElementById("searchInput").addEventListener("input", (e)=>{ searchQuery = e.target.value; renderList(); });
+
+/* --------------------------- Panneau filtres replié ------------------------ */
+document.getElementById("filtersToggle").addEventListener("click", ()=> setFiltersExpanded(!filtersExpanded));
 
 /* ------------------------------ Sidebar mobile ---------------------------- */
 document.getElementById("btnToggleSidebar").addEventListener("click", ()=>{
