@@ -2320,7 +2320,7 @@ function openImport(){
         <textarea class="csv-area" id="i_text" placeholder="${escapeAttr(friendlyCols.join(";"))}"></textarea>
         <div class="csv-help">
           Colonnes reconnues (basées sur les champs et campagnes actuels — ⚙️ Paramètres) : <b>${friendlyCols.map(escapeHtml).join(", ")}</b>. Le fichier peut utiliser un point-virgule ou une virgule comme séparateur, c'est détecté automatiquement.<br>
-          La colonne <b>${escapeHtml(tf.label)}</b> est obligatoire pour qu'une ligne soit importée. Les colonnes <b>Dernière maintenance - &lt;campagne&gt;</b> au format AAAA-MM-JJ.<br>
+          La colonne <b>${escapeHtml(tf.label)}</b> est obligatoire pour qu'une ligne soit importée. Les colonnes de date (<b>Dernière maintenance - &lt;campagne&gt;</b> et les champs de type « Date ») acceptent le format Excel français <b>JJ/MM/AAAA</b> (ex. 15/03/2026) aussi bien que l'ISO AAAA-MM-JJ.<br>
           Si Latitude/Longitude sont vides, vous pourrez positionner chaque site ensuite depuis sa fiche (bouton « Localiser » ou en cliquant sur la carte).
         </div>
         <div class="import-mode">
@@ -2350,6 +2350,39 @@ function openImport(){
     reader.onload = ()=> document.getElementById("i_text").value = reader.result;
     reader.readAsText(file, "utf-8");
   });
+  // Convertit une date saisie/collée dans Excel vers le format ISO AAAA-MM-JJ
+  // attendu par l'application (champs <input type="date"> et calcul des
+  // statuts rouge/jaune/vert). Excel en français affiche et exporte les
+  // dates en JJ/MM/AAAA, pas en ISO — sans cette conversion, la valeur était
+  // enregistrée telle quelle et les champs date restaient vides ("jj/mm/aaaa")
+  // puisqu'un <input type="date"> n'accepte que l'ISO. Accepte aussi JJ-MM-AAAA,
+  // JJ.MM.AAAA, l'année sur 2 chiffres, et un numéro de série Excel (cellule
+  // qui n'était pas au format date au moment de l'export). Une valeur déjà en
+  // ISO, vide, ou dans un format non reconnu est renvoyée telle quelle.
+  function normalizeDateValue(raw){
+    const v = String(raw||"").trim();
+    if(!v) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if(m){
+      const dd = m[1].padStart(2,"0"), mm = m[2].padStart(2,"0"), yyyy = m[3];
+      if(Number(mm)>=1 && Number(mm)<=12 && Number(dd)>=1 && Number(dd)<=31) return `${yyyy}-${mm}-${dd}`;
+    }
+    m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/);
+    if(m){
+      const dd = m[1].padStart(2,"0"), mm = m[2].padStart(2,"0");
+      const yyyy = (Number(m[3])<70 ? "20" : "19") + m[3].padStart(2,"0");
+      if(Number(mm)>=1 && Number(mm)<=12 && Number(dd)>=1 && Number(dd)<=31) return `${yyyy}-${mm}-${dd}`;
+    }
+    if(/^\d{4,6}$/.test(v)){
+      const serial = Number(v);
+      if(serial > 20000 && serial < 60000){
+        const d = new Date((serial - 25569) * 86400 * 1000); // 25569 j entre 1899-12-30 et 1970-01-01
+        if(!isNaN(d)) return d.toISOString().slice(0,10);
+      }
+    }
+    return v;
+  }
   // Construit les champs personnalisés d'un site à partir d'une ligne CSV.
   // Si `existingFields` est fourni (mode mise à jour), une colonne absente du
   // fichier conserve la valeur déjà enregistrée au lieu de l'effacer ; une
@@ -2360,7 +2393,9 @@ function openImport(){
     DB.schema.forEach(f=>{
       if(r[f.id] !== undefined){
         const raw2 = r[f.id];
-        fields[f.id] = f.type==="number" ? (raw2===""?"":Number(raw2)) : String(raw2).trim();
+        fields[f.id] = f.type==="number" ? (raw2===""?"":Number(raw2))
+          : f.type==="date" ? normalizeDateValue(raw2)
+          : String(raw2).trim();
       } else {
         fields[f.id] = existingFields ? (existingFields[f.id] !== undefined ? existingFields[f.id] : "") : "";
       }
@@ -2372,7 +2407,8 @@ function openImport(){
     DB.campaigns.forEach(c=>{
       const key = "maintenance_"+c.id;
       if(r[key] !== undefined){
-        if(r[key]) maintenance[c.id] = r[key]; else delete maintenance[c.id];
+        const norm = normalizeDateValue(r[key]);
+        if(norm) maintenance[c.id] = norm; else delete maintenance[c.id];
       }
     });
     return maintenance;
