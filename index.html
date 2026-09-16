@@ -262,6 +262,11 @@
   .import-result.err{ background:var(--red-bg); color:var(--red); }
   .file-drop{ border:1.5px dashed var(--border); border-radius:8px; padding:16px; text-align:center; color:var(--text-dim); font-size:12.5px; }
   .file-drop input{ display:block; margin:8px auto 0; }
+  .import-mode{ border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:10px; background:var(--bg); }
+  .import-mode-label{ font-size:12.5px; font-weight:600; color:var(--text-dim); margin-bottom:7px; }
+  .import-mode-opt{ display:flex; align-items:flex-start; gap:8px; font-size:12.5px; padding:5px 0; cursor:pointer; }
+  .import-mode-opt input{ margin-top:3px; flex-shrink:0; }
+  .import-mode-opt.danger{ color:var(--red); }
 
   /* ---------- Field / campaign manager ---------- */
   .tabbar{ display:flex; gap:6px; margin-bottom:16px; }
@@ -2266,6 +2271,12 @@ function openImport(){
           La colonne <b>${escapeHtml(tf.label)}</b> est obligatoire pour qu'une ligne soit importée. Les colonnes <b>Dernière maintenance - &lt;campagne&gt;</b> au format AAAA-MM-JJ.<br>
           Si Latitude/Longitude sont vides, vous pourrez positionner chaque site ensuite depuis sa fiche (bouton « Localiser » ou en cliquant sur la carte).
         </div>
+        <div class="import-mode">
+          <div class="import-mode-label">Sites déjà existants (comparaison sur « ${escapeHtml(tf.label)} », sans tenir compte des accents/majuscules) :</div>
+          <label class="import-mode-opt"><input type="radio" name="i_mode" value="add" checked><span>Ajouter uniquement les nouveaux sites — les lignes correspondant à un site déjà présent sont ignorées (pas de doublon créé).</span></label>
+          <label class="import-mode-opt"><input type="radio" name="i_mode" value="update"><span>Ajouter les nouveaux <b>et</b> mettre à jour les sites déjà présents avec les informations du fichier.</span></label>
+          <label class="import-mode-opt danger"><input type="radio" name="i_mode" value="replace"><span>Tout remplacer — supprime <b>tous</b> les sites actuellement enregistrés, puis importe le fichier comme nouvelle liste complète. Irréversible.</span></label>
+        </div>
         <div id="i_result"></div>
       </div>
       <div class="modal-foot">
@@ -2287,48 +2298,129 @@ function openImport(){
     reader.onload = ()=> document.getElementById("i_text").value = reader.result;
     reader.readAsText(file, "utf-8");
   });
+  // Construit les champs personnalisés d'un site à partir d'une ligne CSV.
+  // Si `existingFields` est fourni (mode mise à jour), une colonne absente du
+  // fichier conserve la valeur déjà enregistrée au lieu de l'effacer ; une
+  // colonne présente (même vide) écrase la valeur existante. En création,
+  // toute colonne absente part simplement à vide.
+  function buildFieldsFromRow(r, existingFields){
+    const fields = {};
+    DB.schema.forEach(f=>{
+      if(r[f.id] !== undefined){
+        const raw2 = r[f.id];
+        fields[f.id] = f.type==="number" ? (raw2===""?"":Number(raw2)) : String(raw2).trim();
+      } else {
+        fields[f.id] = existingFields ? (existingFields[f.id] !== undefined ? existingFields[f.id] : "") : "";
+      }
+    });
+    return fields;
+  }
+  function buildMaintenanceFromRow(r, existingMaintenance){
+    const maintenance = { ...(existingMaintenance||{}) };
+    DB.campaigns.forEach(c=>{
+      const key = "maintenance_"+c.id;
+      if(r[key] !== undefined){
+        if(r[key]) maintenance[c.id] = r[key]; else delete maintenance[c.id];
+      }
+    });
+    return maintenance;
+  }
+
   document.getElementById("i_run").addEventListener("click", async ()=>{
     const raw = document.getElementById("i_text").value;
     const resEl = document.getElementById("i_result");
     const runBtn = document.getElementById("i_run");
+    const mode = (overlay.querySelector('input[name="i_mode"]:checked')||{}).value || "add";
     if(!raw.trim()){ resEl.className="import-result err"; resEl.textContent="Aucun contenu à importer."; return; }
     try{
       const rows = parseCsv(raw);
       if(rows.length===0){ resEl.className="import-result err"; resEl.textContent="Fichier vide ou illisible."; return; }
-      let created=0, skipped=0;
-      const newSites = [];
+
+      if(mode==="replace"){
+        if(!confirm(`Supprimer définitivement les ${DB.sites.length} site(s) actuellement enregistrés et les remplacer par le contenu du fichier ? Cette action est irréversible.`)) return;
+      }
+
+      runBtn.disabled = true; runBtn.textContent = "Import en cours...";
+
+      // Sites existants à conserver comme base de comparaison (vide en mode
+      // "Tout remplacer", puisqu'ils vont être supprimés).
+      const baseSites = mode==="replace" ? [] : DB.sites;
+      const byTitle = new Map(baseSites.map(s=> [normalizeHeaderKey(getField(s, tf.id)), s]));
+
+      let created=0, updated=0, skippedDup=0, skippedEmpty=0;
+      const toCreate = [];
+      const toUpdate = [];
       rows.forEach(r=>{
         const titleVal = (r[tf.id]||"").trim();
-        if(!titleVal){ skipped++; return; }
-        const fields = {};
-        DB.schema.forEach(f=>{
-          let raw2 = r[f.id]; if(raw2===undefined) raw2="";
-          if(f.type==="number") fields[f.id] = raw2===""? "" : Number(raw2);
-          else fields[f.id] = String(raw2).trim();
-        });
-        const maintenance = {};
-        DB.campaigns.forEach(c=>{ const v = r["maintenance_"+c.id]; if(v) maintenance[c.id] = v; });
+        if(!titleVal){ skippedEmpty++; return; }
+        const key = normalizeHeaderKey(titleVal);
+        const existing = byTitle.get(key);
+        if(existing){
+          if(mode==="update"){
+            const updatedSite = {
+              ...existing,
+              lat: r.lat ? parseFloat(r.lat) : existing.lat,
+              lng: r.lng ? parseFloat(r.lng) : existing.lng,
+              fields: buildFieldsFromRow(r, existing.fields),
+              maintenance: buildMaintenanceFromRow(r, existing.maintenance),
+              updated_at: TODAY.toISOString().slice(0,10)
+            };
+            toUpdate.push(updatedSite);
+            byTitle.set(key, updatedSite);
+            updated++;
+          } else {
+            skippedDup++;
+          }
+          return;
+        }
         const site = {
           id: uid("s"),
           lat: r.lat ? parseFloat(r.lat) : null,
           lng: r.lng ? parseFloat(r.lng) : null,
-          fields, maintenance,
+          fields: buildFieldsFromRow(r, null),
+          maintenance: buildMaintenanceFromRow(r, null),
           created_at: TODAY.toISOString().slice(0,10)
         };
-        newSites.push(site);
+        toCreate.push(site);
+        byTitle.set(key, site);
         created++;
       });
-      runBtn.disabled = true; runBtn.textContent = "Import en cours...";
-      for(let i=0;i<newSites.length;i+=450){
-        const chunk = newSites.slice(i, i+450);
+
+      if(mode==="replace"){
+        for(let i=0;i<DB.sites.length;i+=450){
+          const chunk = DB.sites.slice(i, i+450);
+          const batch = writeBatch(dbFs);
+          chunk.forEach(s=> batch.delete(doc(sitesCol, s.id)));
+          await batch.commit();
+        }
+      }
+
+      const toWrite = toCreate.concat(toUpdate);
+      for(let i=0;i<toWrite.length;i+=450){
+        const chunk = toWrite.slice(i, i+450);
         const batch = writeBatch(dbFs);
         chunk.forEach(site=> batch.set(doc(sitesCol, site.id), site));
         await batch.commit();
       }
-      newSites.forEach(s=> DB.sites.push(s));
+
+      if(mode==="replace"){
+        DB.sites = toCreate;
+      } else {
+        toCreate.forEach(s=> DB.sites.push(s));
+        toUpdate.forEach(s=>{
+          const idx = DB.sites.findIndex(x=>x.id===s.id);
+          if(idx>=0) DB.sites[idx] = s;
+        });
+      }
       renderAll();
       resEl.className="import-result ok";
-      resEl.textContent = `${created} site(s) importé(s)` + (skipped?`, ${skipped} ligne(s) ignorée(s) (« ${tf.label} » manquant).`:".");
+      const parts = [];
+      if(created) parts.push(`${created} site(s) créé(s)`);
+      if(updated) parts.push(`${updated} site(s) mis à jour`);
+      if(mode==="replace" && !created && !updated) parts.push("tous les sites ont été supprimés");
+      if(skippedDup) parts.push(`${skippedDup} ligne(s) ignorée(s) (site déjà existant)`);
+      if(skippedEmpty) parts.push(`${skippedEmpty} ligne(s) ignorée(s) (« ${tf.label} » manquant)`);
+      resEl.textContent = parts.length ? parts.join(", ")+"." : "Rien à importer.";
     }catch(err){
       resEl.className="import-result err";
       resEl.textContent = "Erreur d'import : " + err.message;
