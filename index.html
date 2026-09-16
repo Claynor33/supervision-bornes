@@ -957,11 +957,20 @@ function pointMarker(kind, point){
   }
   return m;
 }
+// Un POP/départ électrique reste affiché tant qu'il alimente au moins un
+// site du type actuellement filtré (bouton "Recharge"/"Contrôle accès"/
+// "Barrière"). Sans filtre de type actif, tous les POP/départs s'affichent,
+// y compris ceux pas encore reliés à un site.
+function pointMatchesEquipFilter(kind, point){
+  if(!activeEquipement) return true;
+  const field = kind==="pop" ? "pop_ids" : "depart_ids";
+  return DB.sites.some(s=> Array.isArray(s[field]) && s[field].includes(point.id) && equipmentFamily(s)===activeEquipement);
+}
 function rebuildPoints(){
   popLayerGroup.clearLayers();
   departLayerGroup.clearLayers();
-  DB.pops.forEach(p=>{ if(typeof p.lat==="number" && typeof p.lng==="number") popLayerGroup.addLayer(pointMarker("pop", p)); });
-  DB.departs.forEach(d=>{ if(typeof d.lat==="number" && typeof d.lng==="number") departLayerGroup.addLayer(pointMarker("depart", d)); });
+  DB.pops.forEach(p=>{ if(typeof p.lat==="number" && typeof p.lng==="number" && pointMatchesEquipFilter("pop", p)) popLayerGroup.addLayer(pointMarker("pop", p)); });
+  DB.departs.forEach(d=>{ if(typeof d.lat==="number" && typeof d.lng==="number" && pointMatchesEquipFilter("depart", d)) departLayerGroup.addLayer(pointMarker("depart", d)); });
 }
 
 /* --------- Traits de liaison site <-> POP / site <-> départ électrique --------- */
@@ -983,7 +992,9 @@ function drawLinksForPoint(kind, point){
   clearLinkLines();
   if(typeof point.lat!=="number" || typeof point.lng!=="number") return;
   const field = kind==="pop" ? "pop_ids" : "depart_ids";
-  DB.sites.filter(s=> Array.isArray(s[field]) && s[field].includes(point.id) && typeof s.lat==="number").forEach(s=>{
+  DB.sites.filter(s=> Array.isArray(s[field]) && s[field].includes(point.id) && typeof s.lat==="number"
+    && (!activeEquipement || equipmentFamily(s)===activeEquipement)
+  ).forEach(s=>{
     linkLinesGroup.addLayer(L.polyline([[s.lat,s.lng],[point.lat,point.lng]], {color:LINK_COLORS[kind], weight:3, opacity:.85, dashArray: kind==="pop"?"7,5":"2,6"}));
   });
 }
