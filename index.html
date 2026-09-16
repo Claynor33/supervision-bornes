@@ -112,6 +112,8 @@
   .chip .swatch{ width:7px; height:7px; border-radius:50%; }
   .chip.active{ background:var(--text); color:#fff; border-color:var(--text); }
   .chip.active .swatch{ box-shadow:0 0 0 1px #fff; }
+  .chip-icon{ width:14px; height:14px; border-radius:50%; background:#64748b; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .chip-icon svg{ width:9px; height:9px; }
 
   .add-site-btn{
     width:100%; background:var(--accent); color:#fff; border:none; border-radius:8px;
@@ -410,6 +412,7 @@
           <button type="button" data-sort="nom">Nom</button>
         </div>
         <div class="filter-chips" id="filterChips"></div>
+        <div class="filter-chips" id="equipementChips"></div>
         <button class="add-site-btn" id="btnAddSite">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Ajouter un site
@@ -817,6 +820,7 @@ function ficheComplete(site){
 let role = "viewer"; // "admin" | "viewer" — déterminé après connexion (voir onAuthStateChanged)
 let currentUserEmail = null;
 let activeFilter = "tous";
+let activeEquipement = ""; // "" = tous les types | "recharge" | "controle" | "barriere" | "autre"
 let activeCity = ""; // "" = toutes les villes
 let activeSecteur = ""; // "" = tous les secteurs / tournées
 let sortMode = "urgence"; // "urgence" | "nom"
@@ -1020,7 +1024,7 @@ document.addEventListener("keydown", (e)=>{
 
 document.getElementById("btnFitAll").addEventListener("click", ()=>{
   closeFiche();
-  activeCity = ""; activeFilter = "tous"; searchQuery = "";
+  activeCity = ""; activeFilter = "tous"; activeEquipement = ""; searchQuery = "";
   const si = document.getElementById("searchInput"); if(si) si.value = "";
   renderAll();
   const pts = DB.sites.filter(s=>typeof s.lat==="number"&&typeof s.lng==="number").map(s=>[s.lat,s.lng]);
@@ -1115,6 +1119,7 @@ function filteredSites(){
     else if(activeFilter === "echeance") list = list.filter(s=> isEcheanceProche(s));
     else list = list.filter(s=> statusOf(s) === activeFilter);
   }
+  if(activeEquipement) list = list.filter(s=> equipmentFamily(s) === activeEquipement);
   if(searchQuery.trim()){
     const q = searchQuery.trim().toLowerCase();
     list = list.filter(s => Object.values(s.fields||{}).some(v => String(v??"").toLowerCase().includes(q)));
@@ -1135,8 +1140,25 @@ function renderFilterChips(){
   document.getElementById("filterChips").innerHTML = defs.map(d=>
     `<button class="chip ${activeFilter===d.key?"active":""}" data-filter="${d.key}">${d.color?`<span class="swatch" style="background:${d.color}"></span>`:""}${d.label}</button>`
   ).join("");
-  document.querySelectorAll(".chip").forEach(el=>{
+  document.querySelectorAll("#filterChips .chip").forEach(el=>{
     el.addEventListener("click", ()=>{ activeFilter = el.dataset.filter; renderAll(); });
+  });
+}
+
+// Filtre par type d'équipement (recharge / contrôle d'accès / barrière) —
+// s'applique en plus du filtre de statut, sur la liste ET sur la carte.
+function renderEquipementFilter(){
+  const defs = [
+    {key:"", label:"Tous types"},
+    {key:"recharge", label:EQUIPMENT_LABELS.recharge, icon:EQUIPMENT_ICONS.recharge},
+    {key:"controle", label:EQUIPMENT_LABELS.controle, icon:EQUIPMENT_ICONS.controle},
+    {key:"barriere", label:EQUIPMENT_LABELS.barriere, icon:EQUIPMENT_ICONS.barriere},
+  ];
+  document.getElementById("equipementChips").innerHTML = defs.map(d=>
+    `<button class="chip ${activeEquipement===d.key?"active":""}" data-equip="${d.key}">${d.icon?`<span class="chip-icon">${d.icon}</span>`:""}${d.label}</button>`
+  ).join("");
+  document.querySelectorAll("#equipementChips .chip").forEach(el=>{
+    el.addEventListener("click", ()=>{ activeEquipement = el.dataset.equip; renderAll(); });
   });
 }
 
@@ -1202,6 +1224,7 @@ function renderAll(){
   renderCityFilter();
   renderSecteurFilter();
   renderFilterChips();
+  renderEquipementFilter();
   renderList();
   rebuildMap(filteredSites());
   rebuildPoints();
