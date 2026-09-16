@@ -186,10 +186,15 @@
   }
   .placement-banner button:hover{ background:rgba(255,255,255,.28); }
 
+  /* Repliée par défaut (comme le panneau "Filtres & tri" de la liste des
+     sites) : ne prend de la place sur la carte que si on clique dessus,
+     sur mobile comme sur ordinateur. */
   .legend{
     position:absolute; bottom:16px; left:16px; background:var(--panel); border:1px solid var(--border);
     border-radius:10px; padding:10px 12px; box-shadow:var(--shadow); font-size:12px; z-index:400;
+    display:none; max-height:min(320px, 55vh); overflow-y:auto;
   }
+  .legend.open{ display:block; }
   .legend-row{ display:flex; align-items:center; gap:7px; margin-bottom:4px; }
   .legend-row:last-child{ margin-bottom:0; }
   .legend-dot{ width:10px; height:10px; border-radius:50%; }
@@ -199,8 +204,8 @@
   .legend-line{ display:inline-block; width:16px; height:3px; border-radius:2px; flex-shrink:0; }
   .legend-toggle{
     position:absolute; bottom:16px; left:16px; z-index:401; width:36px; height:36px; border-radius:50%;
-    border:1px solid var(--border); background:var(--panel); box-shadow:var(--shadow); align-items:center;
-    justify-content:center; font-size:16px; color:var(--text-dim);
+    border:1px solid var(--border); background:var(--panel); box-shadow:var(--shadow); display:flex; align-items:center;
+    justify-content:center; font-size:16px; color:var(--text-dim); cursor:pointer;
   }
 
   /* ---------- Fiche panel ---------- */
@@ -371,12 +376,8 @@
     input, select, textarea{ font-size:16px; }
     .geo-row input{ flex:1 1 100%; }
     .geo-row .small-btn{ flex:1; }
-    .legend-toggle{ display:flex; }
-    .legend{ display:none; max-height:min(320px, 55vh); overflow-y:auto; }
-    .legend.open{ display:block; }
   }
   .mobile-only{ display:none; }
-  .legend-toggle{ display:none; }
 </style>
 </head>
 <body>
