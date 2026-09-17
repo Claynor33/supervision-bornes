@@ -889,29 +889,59 @@ let draftLatLng = null;
 let movingTarget = null; // { kind:"site"|"pop"|"depart", id } — repositionnement d'un point existant via le bouton dédié
 
 /* -------------------------------- Carte -------------------------------- */
-// Les grands fournisseurs de tuiles gratuits (OpenStreetMap, CARTO...) bloquent
-// de plus en plus les applications sans clé d'API, surtout en usage local (file://).
-// Solution immédiate : tuiles Esri (gratuites, sans inscription).
-// Solution la plus fiable dans la durée : une clé gratuite MapTiler.
+// Plusieurs fonds de carte au choix, via le sélecteur de calques (icône en
+// haut à gauche, sous le zoom +/-) : OpenStreetMap (mis à jour en continu
+// par la communauté, généralement le plus à jour pour la voirie française)
+// est utilisé par défaut, avec le plan et le satellite Esri disponibles en
+// repli si besoin. Les grands fournisseurs de tuiles gratuits peuvent
+// occasionnellement limiter le trafic sans clé d'API, surtout en usage local
+// (file://) — ici l'appli tourne sur un vrai domaine (GitHub Pages), donc le
+// risque est faible, mais en cas de souci le sélecteur permet de basculer
+// sur Esri en un clic sans devoir me redemander.
+// Solution la plus fiable dans la durée (aucune limite, mise à jour
+// fréquente) : une clé gratuite MapTiler, alors utilisée par défaut.
 //   1) Crée un compte gratuit sur https://cloud.maptiler.com/ (2 min, sans CB)
 //   2) Colle ta clé ci-dessous entre les guillemets
 const MAPTILER_KEY = "";
 
-const tileUrl = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`
-  : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
-const tileAttribution = MAPTILER_KEY
-  ? '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-  : 'Tiles &copy; Esri — Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, &copy; OpenStreetMap contributors, and the GIS User Community';
+const BASEMAPS = {
+  "OpenStreetMap": L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, subdomains: "abc",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }),
+  "Plan (Esri)": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 20,
+    attribution: 'Tiles &copy; Esri — Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, &copy; OpenStreetMap contributors, and the GIS User Community'
+  }),
+  "Satellite (Esri)": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 20,
+    attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+  }),
+};
+if(MAPTILER_KEY){
+  BASEMAPS["MapTiler"] = L.tileLayer(`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
+    maxZoom: 20,
+    attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  });
+}
+// Le choix du fond de carte est mémorisé par appareil (sinon MapTiler si une
+// clé est configurée ci-dessus, sinon OpenStreetMap par défaut).
+let savedBasemap = null;
+try{ savedBasemap = localStorage.getItem("supervisionBornes_basemap"); }catch(e){}
+const defaultBasemapName = (savedBasemap && BASEMAPS[savedBasemap]) ? savedBasemap : (MAPTILER_KEY ? "MapTiler" : "OpenStreetMap");
 
 const map = L.map("map", { zoomControl:true, minZoom:6, maxZoom:19 }).setView([44.8378, -0.5792], 13);
-const baseLayer = L.tileLayer(tileUrl, { maxZoom: 20, attribution: tileAttribution }).addTo(map);
+BASEMAPS[defaultBasemapName].addTo(map);
+L.control.layers(BASEMAPS, {}, { position:"topleft", collapsed:true }).addTo(map);
+map.on("baselayerchange", (e)=>{
+  try{ localStorage.setItem("supervisionBornes_basemap", e.name); }catch(err){}
+});
 let tileErrorWarned = false;
-baseLayer.on("tileerror", ()=>{
+Object.values(BASEMAPS).forEach(layer=> layer.on("tileerror", ()=>{
   if(tileErrorWarned) return;
   tileErrorWarned = true;
-  toast("Le fond de carte ne se charge pas — voir le commentaire MAPTILER_KEY en haut du script.");
-});
+  toast("Ce fond de carte ne se charge pas — essayez-en un autre via l'icône calques en haut à gauche de la carte.");
+}));
 
 const clusterGroup = L.markerClusterGroup({
   maxClusterRadius: 42,
