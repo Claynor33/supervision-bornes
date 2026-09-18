@@ -2516,8 +2516,26 @@ function openImport(){
   document.getElementById("i_file").addEventListener("change", (e)=>{
     const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();
-    reader.onload = ()=> document.getElementById("i_text").value = reader.result;
-    reader.readAsText(file, "utf-8");
+    reader.onload = ()=>{
+      // Un CSV enregistré depuis Excel avec l'option "CSV UTF-8" a un BOM en
+      // tête de fichier et est en UTF-8 ; un CSV enregistré avec l'option
+      // "CSV" toute simple (sans "UTF-8" dans le nom) n'a pas de BOM et est
+      // encodé en Windows-1252 (ANSI), l'encodage historique d'Excel sur
+      // Windows en France — décoder ce dernier en UTF-8 corrompt les
+      // caractères accentués (ex. "Bègles" devient illisible), ce qui fait
+      // ensuite échouer la reconnaissance des sites déjà existants par leur
+      // nom à l'import (ils sont alors traités comme de nouveaux sites, et
+      // leurs liens POP réseau / départs électriques semblent disparaître).
+      // On détecte donc le BOM pour choisir le bon décodage plutôt que de
+      // toujours forcer l'UTF-8.
+      const buf = new Uint8Array(reader.result);
+      const hasBom = buf.length>=3 && buf[0]===0xEF && buf[1]===0xBB && buf[2]===0xBF;
+      let text;
+      try{ text = new TextDecoder(hasBom ? "utf-8" : "windows-1252").decode(buf); }
+      catch(err){ text = new TextDecoder("utf-8").decode(buf); }
+      document.getElementById("i_text").value = text;
+    };
+    reader.readAsArrayBuffer(file);
   });
   // Convertit une date saisie/collée dans Excel vers le format ISO AAAA-MM-JJ
   // attendu par l'application (champs <input type="date"> et calcul des
@@ -2593,18 +2611,15 @@ function openImport(){
       const rows = parseCsv(raw);
       if(rows.length===0){ resEl.className="import-result err"; resEl.textContent="Fichier vide ou illisible."; return; }
 
-      if(mode==="replace"){
-        if(!confirm(`Les sites qui ne figurent pas dans ce fichier seront supprimés. Les sites déjà présents dans le fichier seront mis à jour (ils conservent leur position sur la carte si elle n'est pas fournie, ainsi que leurs liens POP réseau / départs électriques). Continuer ?`)) return;
-      }
-
-      runBtn.disabled = true; runBtn.textContent = "Import en cours...";
-
       // Base de comparaison : toujours les sites déjà enregistrés, y compris
       // en mode "Tout remplacer". Une ligne qui correspond à un site existant
-      // (même nom) MET À JOUR ce site en conservant son id, plutôt que de le
-      // supprimer et d'en recréer un nouveau — c'est ce qui permet de garder
-      // ses liens POP réseau / départs électriques (site.pop_ids / depart_ids),
-      // qui ne sont pas dans le fichier CSV et seraient sinon perdus.
+      // (même nom, comparé sans tenir compte des accents/majuscules) MET À
+      // JOUR ce site en conservant son id, plutôt que de le supprimer et
+      // d'en recréer un nouveau — c'est ce qui permet de garder ses liens
+      // POP réseau / départs électriques (site.pop_ids / depart_ids), qui ne
+      // sont pas dans le fichier CSV et seraient sinon perdus. Ce calcul est
+      // fait AVANT toute confirmation/écriture : purement en mémoire, sans
+      // effet de bord, pour pouvoir prévenir avant de supprimer quoi que ce soit.
       const byTitle = new Map(DB.sites.map(s=> [normalizeHeaderKey(getField(s, tf.id)), s]));
       const matchedIds = new Set();
 
@@ -2645,6 +2660,24 @@ function openImport(){
       // "Tout remplacer" : seuls les sites absents du fichier sont supprimés
       // (ceux retrouvés par leur nom sont mis à jour ci-dessus, pas recréés).
       const toDelete = mode==="replace" ? DB.sites.filter(s=> !matchedIds.has(s.id)) : [];
+
+      if(mode==="replace"){
+        // Liste les sites qui seraient supprimés AVANT de les supprimer : un
+        // site attendu comme "mis à jour" qui apparaît ici indique presque
+        // toujours un problème de reconnaissance du nom (accents mal
+        // encodés dans le fichier, nom légèrement différent...) plutôt
+        // qu'une vraie suppression voulue — l'occasion de vérifier avant de
+        // valider, plutôt que de découvrir la perte après coup.
+        if(toDelete.length){
+          const preview = toDelete.slice(0, 20).map(s=> "• "+siteTitle(s)).join("\n");
+          const more = toDelete.length>20 ? `\n… et ${toDelete.length-20} autre(s)` : "";
+          if(!confirm(`${toDelete.length} site(s) ne figurent pas (ou plus sous ce nom) dans le fichier et seront supprimés :\n\n${preview}${more}\n\nSi un site listé ici devrait pourtant être reconnu comme déjà existant, c'est probablement un souci d'accents/nom légèrement différent dans le fichier — annulez et vérifiez plutôt que de continuer.\n\nContinuer et supprimer ces sites ?`)) return;
+        } else {
+          if(!confirm(`Les sites déjà présents dans le fichier seront mis à jour (ils conservent leurs liens POP réseau / départs électriques). Aucun site existant ne sera supprimé. Continuer ?`)) return;
+        }
+      }
+
+      runBtn.disabled = true; runBtn.textContent = "Import en cours...";
 
       for(let i=0;i<toDelete.length;i+=450){
         const chunk = toDelete.slice(i, i+450);
